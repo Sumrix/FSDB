@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="FSDB.Tests/FSDB.Tests.csproj" Id="af0b3d19-a443-4667-a56c-d988c56edd89" />
+  <Project Path="FSDB/FSDB.csproj" />
+</Solution>
