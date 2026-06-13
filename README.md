@@ -4,31 +4,21 @@ FSDB is a local-first file-system database for .NET.
 
 It is built around a simple idea: the file system itself should be a user-friendly API for the database. A table is a folder, a record is a file, and the data remains readable, editable, movable, and inspectable with ordinary operating system tools.
 
-## Status
-
-FSDB is in active development. The project works, but it is still being polished for stability, API clarity, and production readiness.
-
-It is not recommended for real-world use yet. At this stage, the repository is mainly useful for following the design, experimenting locally, and discussing the model.
-
-## What It Does
+## Features
 
 FSDB:
 
 - treats files as database records;
 - exposes a table-like API with primary keys;
 - lets users create, edit, rename, move, and delete records directly through the file system;
-- keeps an internal file index for fast access to cached fields;
-- safely handles file-system errors and delayed file-system watcher events;
+- keeps records readable and inspectable with ordinary tools;
+- handles delayed file-system watcher events and recovery scans;
 - supports schema-versioned records and migrations;
 - is being built with trimming and NativeAOT support in mind.
 
-## Who Is It For?
-
-FSDB is for applications where users should have direct access to their data files.
-
-It can fit scenarios such as chat history, game saves, settings presets, editable local content, or other data that users may want to inspect, edit, back up, sync, share, or put under source control without a special database tool.
-
 ## Quick Start
+
+Clone the repository and reference the FSDB project directly. A NuGet package is planned for later.
 
 ```csharp
 using FSDB;
@@ -59,3 +49,23 @@ public sealed record User(
 ```
 
 This creates a database directory, creates a table directory for `User`, writes a user record as a file, reads it back through the table API, and then deletes it.
+
+## Who Is It For
+
+FSDB is for applications where users should have direct access to their data files.
+
+It can fit scenarios such as chat history, game saves, settings presets, editable local content, or other data that users may want to inspect, edit, back up, sync, share, or put under source control without a special database tool.
+
+## Reliability & Data Safety
+
+User data is sacred. FSDB treats your files as the source of truth, and the in-memory index must never silently diverge or lose data.
+
+Instead of relying on ad-hoc reconciliation logic, FSDB uses a strict, explicitly modeled decision process. Every important edge case, including missing files, decode errors, ID changes, and I/O races, is handled intentionally.
+
+[Read the Index Reconciliation Rulebook](docs/index-reconciliation-rulebook.md) to see the exact decision tables and lock boundaries. Analyze it yourself: no hand-waving, no hidden magic.
+
+## Status
+
+FSDB is in active development. The project works, but it is still being polished for stability, API clarity, and production readiness.
+
+It is not recommended for real-world use yet. At this stage, the repository is mainly useful for following the design, experimenting locally, and discussing the model.
