@@ -1,9 +1,9 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
-using FSDB.Files;
-using FSDB.Index.State;
-using FSDB.Tables;
+using FSDB.FileStorage;
+using FSDB.Indexing.State;
+using FSDB.Runtime;
 
 namespace FSDB.Tests;
 

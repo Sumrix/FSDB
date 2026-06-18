@@ -1,6 +1,6 @@
 using System;
-using FSDB.Files;
-using FSDB.Index.State;
+using FSDB.FileStorage;
+using FSDB.Indexing.State;
 
 namespace FSDB.Tests;
 

@@ -2,8 +2,8 @@ using System;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
-using FSDB.Files;
-using FSDB.Index.State;
+using FSDB.FileStorage;
+using FSDB.Model;
 
 namespace FSDB.Tests;
 

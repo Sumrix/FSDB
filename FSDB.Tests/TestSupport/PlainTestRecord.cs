@@ -1,4 +1,4 @@
-using FSDB.Tables;
+using FSDB.Model;
 
 namespace FSDB.Tests.TestSupport;
 

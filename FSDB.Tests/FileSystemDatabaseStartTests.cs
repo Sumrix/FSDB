@@ -2,12 +2,11 @@ using System;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
-using FSDB.Files;
-using FSDB.Scheduling;
-using FSDB.Index.State;
-using FSDB.Tables;
-using FSDB.Tables.Building;
+using FSDB.FileStorage;
 using FSDB.Tests.TestSupport;
+using FSDB.Model;
+using FSDB.Model.Building;
+using FSDB.Retry;
 
 namespace FSDB.Tests;
 
@@ -258,7 +257,7 @@ public sealed class FileSystemDatabaseStartTests
     {
         var rootPath = Directory.CreateTempSubdirectory().FullName;
         TrackingWorkScheduler? originalScheduler = null;
-        var originalFactory = new Func<Microsoft.Extensions.Logging.ILoggerFactory, Scheduling.IWorkScheduler<string>>(
+        var originalFactory = new Func<Microsoft.Extensions.Logging.ILoggerFactory, IWorkScheduler<string>>(
             _ => originalScheduler = new TrackingWorkScheduler());
 
         try
@@ -290,7 +289,7 @@ public sealed class FileSystemDatabaseStartTests
             jsonOptions: TestsJsonContext.Default.Options);
     }
 
-    private sealed class TrackingWorkScheduler : Scheduling.IWorkScheduler<string>
+    private sealed class TrackingWorkScheduler : IWorkScheduler<string>
     {
         public bool Disposed { get; private set; }
         public int EnqueueCount { get; private set; }

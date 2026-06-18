@@ -2,9 +2,9 @@ using System.IO;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
-using FSDB.Exceptions;
-using FSDB.Migration;
-using FSDB.Tables;
+using FSDB.Encoding;
+using FSDB.Infrastructure.Exceptions;
+using FSDB.Model;
 using FSDB.Tests.TestSupport;
 
 namespace FSDB.Tests;

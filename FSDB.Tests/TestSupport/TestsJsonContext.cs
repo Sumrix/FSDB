@@ -1,5 +1,5 @@
 using System.Text.Json.Serialization;
-using FSDB.Tables;
+using FSDB.Model;
 
 namespace FSDB.Tests.TestSupport;
 

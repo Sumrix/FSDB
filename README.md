@@ -21,9 +21,8 @@ FSDB:
 Clone the repository and reference the FSDB project directly. A NuGet package is planned for later.
 
 ```csharp
-using FSDB;
-using FSDB.Tables;
-using FSDB.Tables.Building;
+using FSDB.Model;
+using FSDB.Model.Building;
 
 var users = TableDefinitionBuilder.CreateDefault<string, User>();
 

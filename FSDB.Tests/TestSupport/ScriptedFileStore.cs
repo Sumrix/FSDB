@@ -3,9 +3,8 @@ using System.Collections.Generic;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
-using FSDB.Files;
-using FSDB.Helpers;
-using FSDB.Index.State;
+using FSDB.FileStorage;
+using FSDB.Infrastructure.Helpers;
 
 namespace FSDB.Tests.TestSupport;
 

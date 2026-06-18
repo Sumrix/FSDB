@@ -1,5 +1,5 @@
 using System.Collections.Generic;
-using FSDB.Collections;
+using FSDB.Infrastructure.Collections;
 
 namespace FSDB.Tests;
 

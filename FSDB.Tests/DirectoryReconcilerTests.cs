@@ -2,8 +2,8 @@ using System;
 using System.IO;
 using System.Text.Json;
 using System.Threading.Tasks;
+using FSDB.Runtime;
 using FSDB.Tests.TestSupport;
-using FSDB.Tables;
 
 namespace FSDB.Tests;
 

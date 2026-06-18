@@ -2,7 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
-using FSDB.Scheduling;
+using FSDB.Retry;
 
 namespace FSDB.Tests.TestSupport;
 

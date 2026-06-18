@@ -2,11 +2,11 @@ using System;
 using System.IO;
 using System.Text.Json;
 using System.Threading.Tasks;
-using FSDB.Files;
-using FSDB.Index;
-using FSDB.Migration;
-using FSDB.Tables;
-using FSDB.Tables.Processors;
+using FSDB.Encoding;
+using FSDB.FileStorage;
+using FSDB.Indexing;
+using FSDB.Model;
+using FSDB.Runtime;
 using Microsoft.Extensions.Logging.Abstractions;
 
 namespace FSDB.Tests.TestSupport;

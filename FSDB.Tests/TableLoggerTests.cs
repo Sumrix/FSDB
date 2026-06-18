@@ -1,6 +1,6 @@
 using System;
 using System.Collections.Generic;
-using FSDB.Logging;
+using FSDB.Infrastructure.Logging;
 using Microsoft.Extensions.Logging;
 
 namespace FSDB.Tests;
