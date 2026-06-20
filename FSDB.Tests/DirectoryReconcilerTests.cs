@@ -2,7 +2,6 @@ using System;
 using System.IO;
 using System.Text.Json;
 using System.Threading.Tasks;
-using FSDB.Runtime;
 using FSDB.Tests.TestSupport;
 
 namespace FSDB.Tests;
@@ -104,7 +103,7 @@ public class DirectoryReconcilerTests
         Assert.Equal("b.json", record.CurrentFileName);
         Assert.True(scope.Files.ContainsKey("a.json"));
         Assert.True(scope.Files.ContainsKey("b.json"));
-        Assert.Equal("two", new ProjectionIndexView<string, string>(ctx.Index.Records)["shared-id"]);
+        Assert.Equal("two", record.GetCurrentFileState().Projection);
     }
 
     private static void AssertNoRetry(ReconcilerTestContext ctx) => Assert.Equal(0, ctx.RetryScheduler.PendingCount);

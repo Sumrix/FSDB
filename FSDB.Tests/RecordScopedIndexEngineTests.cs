@@ -174,23 +174,6 @@ public class RecordScopedIndexEngineTests : IDisposable
     }
 
     [Fact]
-    public async Task CurrentProjections_WhenFileNameReserved_ExcludesReservedRecord()
-    {
-        await using var engine = await RecordScopedIndexEngine<string, TestRecord, string>.StartAsync(
-            _path,
-            _stringTable,
-            _stringPersistence,
-            autoSaveEnabled: false);
-
-        engine.TryReserveFileName("id-1", "reserved.json").Should().BeTrue();
-
-        var projections = new ProjectionIndexView<string, string>(engine.Records);
-        projections.Should().BeEmpty();
-        projections.ContainsKey("id-1").Should().BeFalse();
-        projections.Keys.Should().BeEmpty();
-    }
-
-    [Fact]
     public async Task Upsert_WhenFingerprintUnchanged_DoesNotRebuildProjection()
     {
         await using var engine = await RecordScopedIndexEngine<string, TestRecord, string>.StartAsync(
@@ -224,8 +207,12 @@ public class RecordScopedIndexEngineTests : IDisposable
         engine.Upsert("id-1", "file-a.json", fingerprint, new TestRecord("id-1", 1, "first")).Should().Be(IndexOperationResult.Applied);
         engine.Upsert("id-1", "file-a.json", fingerprint, errorInfo).Should().Be(IndexOperationResult.Applied);
 
-        engine.Files["file-a.json"].Projection.Should().Be("first");
-        new ProjectionIndexView<string, string>(engine.Records).Should().BeEmpty();
+        engine.Files["file-a.json"].Projection.Should().Be("first"); 
+        
+        var currentFile = engine.Records["id-1"].GetCurrentFileState();
+
+        currentFile.Projection.Should().Be("first");
+        currentFile.ErrorInfo.Should().Be(errorInfo);
     }
 
     [Fact]
@@ -249,7 +236,7 @@ public class RecordScopedIndexEngineTests : IDisposable
             _stringPersistence,
             autoSaveEnabled: false);
 
-        new ProjectionIndexView<string, string>(engine.Records)["id-1"].Should().Be("Harry Potter");
+        engine.Records["id-1"].GetCurrentFileState().Projection.Should().Be("Harry Potter");
         engine.Files["user.json"].Projection.Should().Be("Harry Potter");
         engine.Files["user.json"].Status.Should().Be(FileIndexStatus.Committed);
         engine.Files["user.json"].ErrorInfo.Should().BeNull();
@@ -289,7 +276,7 @@ public class RecordScopedIndexEngineTests : IDisposable
         engine.Files["user.json"].Status.Should().Be(FileIndexStatus.Committed);
         engine.Files["user.json"].ErrorInfo.Should().Be(errorInfo);
         engine.Records["id-1"].CurrentFileName.Should().Be("user.json");
-        new ProjectionIndexView<string, string>(engine.Records).Should().BeEmpty();
+        engine.Records["id-1"].GetCurrentFileState().ErrorInfo.Should().Be(errorInfo);
     }
 
     private Task<RecordScopedIndexEngine<string, TestRecord, NoProjection>> CreateNoProjectionEngineAsync() =>

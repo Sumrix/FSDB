@@ -4,7 +4,6 @@ using System.Text.Json;
 using System.Threading.Tasks;
 using FSDB.FileStorage;
 using FSDB.Indexing.State;
-using FSDB.Runtime;
 using FSDB.Tests.TestSupport;
 
 namespace FSDB.Tests;
@@ -28,7 +27,7 @@ public class FileReconcilerTests
         Assert.True(record.Files.TryGetValue("alpha.json", out var file));
         Assert.True(file.Fingerprint.Exists);
         Assert.Equal("value", file.Projection);
-        Assert.Equal("value", new ProjectionIndexView<string, string>(ctx.Index.Records)["id-1"]);
+        Assert.Equal("value", record.GetCurrentFileState().Projection);
     }
 
     [Fact]
