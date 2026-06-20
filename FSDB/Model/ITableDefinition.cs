@@ -17,7 +17,7 @@ public interface ITableDefinition
         string tablePath,
         string indexFilePath,
         IFileStore fileStore,
-        IWorkScheduler<string> workScheduler,
+        IRetryScheduler<string> retryScheduler,
         DatabaseOptions options,
         ILoggerFactory loggerFactory,
         CancellationToken ct = default);

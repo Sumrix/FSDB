@@ -9,7 +9,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 
 namespace FSDB.Retry;
 
-public class TimeBucketQueueManager : IWorkScheduler<string>
+public class TimeBucketQueueManager : IRetryScheduler<string>
 {
     private readonly int _maxRetryIntervals;
     private readonly int _backoffMultiplier;
@@ -46,7 +46,7 @@ public class TimeBucketQueueManager : IWorkScheduler<string>
             effectiveLoggerFactory.CreateLogger<BucketTimerScheduler>());
     }
 
-    public void Enqueue(string value, Func<string, CancellationToken, Task<ProcessResult>> processor)
+    public void Enqueue(string value, Func<string, CancellationToken, Task<RetryDecision>> processor)
     {
         ArgumentNullException.ThrowIfNull(value);
         ArgumentNullException.ThrowIfNull(processor);
@@ -90,7 +90,7 @@ public class TimeBucketQueueManager : IWorkScheduler<string>
 
             _items.TryRemove(item.Value, out _);
 
-            ProcessResult result;
+            RetryDecision result;
             try
             {
                 result = await item.Processor(item.Value, _cancellationToken);
@@ -98,20 +98,20 @@ public class TimeBucketQueueManager : IWorkScheduler<string>
             catch (OperationCanceledException)
             {
                 _logger.LogTrace("Processing canceled: item={Item}", item.Value);
-                result = ProcessResult.Complete;
+                result = RetryDecision.Complete;
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Processing failed: item={Item}", item.Value);
-                result = ProcessResult.RetryWithBackoff;
+                result = RetryDecision.RetryWithBackoff;
             }
 
             switch (result)
             {
-                case ProcessResult.RetryWithBackoff:
+                case RetryDecision.RetryWithBackoff:
                     ScheduleRetry(item, resetBackoff: false);
                     break;
-                case ProcessResult.RetryWithMinBackoff:
+                case RetryDecision.RetryWithMinBackoff:
                     ScheduleRetry(item, resetBackoff: true);
                     break;
             }
@@ -167,7 +167,7 @@ public class TimeBucketQueueManager : IWorkScheduler<string>
     private sealed class QueueItem
     {
         public required string Value { get; init; }
-        public required Func<string, CancellationToken, Task<ProcessResult>> Processor { get; init; }
+        public required Func<string, CancellationToken, Task<RetryDecision>> Processor { get; init; }
         public required long TargetBucket { get; set; }
         public required int CurrentBackoff { get; set; }
     }

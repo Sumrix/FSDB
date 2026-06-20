@@ -6,13 +6,13 @@ using FSDB.Retry;
 
 namespace FSDB.Tests.TestSupport;
 
-internal sealed class InlineWorkScheduler : IWorkScheduler<string>
+internal sealed class InlineRetryScheduler : IRetryScheduler<string>
 {
-    private readonly Queue<(string Value, Func<string, CancellationToken, Task<ProcessResult>> Processor)> _queue = new();
+    private readonly Queue<(string Value, Func<string, CancellationToken, Task<RetryDecision>> Processor)> _queue = new();
     private bool _disposed;
     public int PendingCount => _queue.Count;
 
-    public void Enqueue(string value, Func<string, CancellationToken, Task<ProcessResult>> processor)
+    public void Enqueue(string value, Func<string, CancellationToken, Task<RetryDecision>> processor)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         _queue.Enqueue((value, processor));
@@ -25,7 +25,7 @@ internal sealed class InlineWorkScheduler : IWorkScheduler<string>
 
         var (value, processor) = _queue.Dequeue();
         var result = await processor(value, ct);
-        if (result != ProcessResult.Complete)
+        if (result != RetryDecision.Complete)
         {
             _queue.Enqueue((value, processor));
         }
@@ -41,7 +41,7 @@ internal sealed class InlineWorkScheduler : IWorkScheduler<string>
             await RunNextAsync(ct);
             safety++;
             if (safety > 10_000)
-                throw new InvalidOperationException("InlineWorkScheduler exceeded safety iteration limit.");
+                throw new InvalidOperationException("InlineRetryScheduler exceeded safety iteration limit.");
         }
     }
 

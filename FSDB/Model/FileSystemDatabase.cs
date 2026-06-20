@@ -21,7 +21,7 @@ public class FileSystemDatabase : IAsyncDisposable
     private readonly IReadOnlyList<ITableDefinition> _tableDefinitions;
     private readonly ILogger<FileSystemDatabase> _logger;
     private readonly IFileStore _fileStore;
-    private readonly IWorkScheduler<string> _workScheduler;
+    private readonly IRetryScheduler<string> _retryScheduler;
 
     private readonly Dictionary<Type, ITableEngine> _tableEnginesByType;
     private readonly Dictionary<string, ITableEngine> _tableEnginesByDirectoryName;
@@ -54,7 +54,7 @@ public class FileSystemDatabase : IAsyncDisposable
             options,
             tableDefinitions,
             services.FileStore,
-            services.WorkScheduler,
+            services.RetryScheduler,
             logger);
 
         try
@@ -78,14 +78,14 @@ public class FileSystemDatabase : IAsyncDisposable
         DatabaseOptions options,
         IReadOnlyList<ITableDefinition> tableDefinitions,
         IFileStore fileStore,
-        IWorkScheduler<string> workScheduler,
+        IRetryScheduler<string> retryScheduler,
         ILogger<FileSystemDatabase> logger)
     {
         _rootPath = rootPath;
         _options = options;
         _tableDefinitions = tableDefinitions;
         _fileStore = fileStore;
-        _workScheduler = workScheduler;
+        _retryScheduler = retryScheduler;
         _logger = logger;
         _tableEnginesByType = new();
         _tableEnginesByDirectoryName = new(PathHelper.OSDependedPathComparer);
@@ -112,7 +112,7 @@ public class FileSystemDatabase : IAsyncDisposable
                 tablePath,
                 indexFilePath,
                 _fileStore,
-                _workScheduler,
+                _retryScheduler,
                 _options,
                 tableLoggerFactory);
 
@@ -136,11 +136,11 @@ public class FileSystemDatabase : IAsyncDisposable
         _rootPathWatcher.EnableRaisingEvents = true;
     }
 
-    public static IWorkScheduler<string> CreateDefaultWorkScheduler(
-        DefaultWorkSchedulerOptions? options,
+    public static IRetryScheduler<string> CreateDefaultRetryScheduler(
+        DefaultRetrySchedulerOptions? options,
         ILoggerFactory loggerFactory)
     {
-        var effectiveOptions = options ?? new DefaultWorkSchedulerOptions();
+        var effectiveOptions = options ?? new DefaultRetrySchedulerOptions();
 
         return new TimeBucketQueueManager(
             intervalMs: effectiveOptions.IntervalMs,
@@ -214,7 +214,7 @@ public class FileSystemDatabase : IAsyncDisposable
         foreach (var tableEngine in _tableEnginesByType.Values)
             await DisposeHelper.SafeDispose(tableEngine);
 
-        DisposeHelper.SafeDispose(_workScheduler);
+        DisposeHelper.SafeDispose(_retryScheduler);
         DisposeHelper.SafeDispose(_fileStore as IDisposable);
 
         GC.SuppressFinalize(this);
@@ -253,15 +253,15 @@ public class FileSystemDatabase : IAsyncDisposable
                 throw new InvalidOperationException("The configured file store factory returned null.");
             }
 
-            var workScheduler = options.WorkSchedulerFactory is null
-                ? CreateDefaultWorkScheduler(options: null, options.LoggerFactory)
-                : options.WorkSchedulerFactory(options.LoggerFactory);
-            if (workScheduler is null)
+            var retryScheduler = options.RetrySchedulerFactory is null
+                ? CreateDefaultRetryScheduler(options: null, options.LoggerFactory)
+                : options.RetrySchedulerFactory(options.LoggerFactory);
+            if (retryScheduler is null)
             {
-                throw new InvalidOperationException("The configured work scheduler factory returned null.");
+                throw new InvalidOperationException("The configured retry scheduler factory returned null.");
             }
 
-            return new CreatedServices(fileStore, workScheduler);
+            return new CreatedServices(fileStore, retryScheduler);
         }
         catch
         {
@@ -270,12 +270,12 @@ public class FileSystemDatabase : IAsyncDisposable
         }
     }
 
-    private sealed class CreatedServices(IFileStore fileStore, IWorkScheduler<string> workScheduler) : IDisposable
+    private sealed class CreatedServices(IFileStore fileStore, IRetryScheduler<string> retryScheduler) : IDisposable
     {
         private bool _disposed;
 
         public IFileStore FileStore { get; } = fileStore;
-        public IWorkScheduler<string> WorkScheduler { get; } = workScheduler;
+        public IRetryScheduler<string> RetryScheduler { get; } = retryScheduler;
 
         public void Dispose()
         {
@@ -285,7 +285,7 @@ public class FileSystemDatabase : IAsyncDisposable
             }
 
             _disposed = true;
-            DisposeHelper.SafeDispose(WorkScheduler);
+            DisposeHelper.SafeDispose(RetryScheduler);
             DisposeHelper.SafeDispose(FileStore as IDisposable);
         }
     }

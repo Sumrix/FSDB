@@ -27,7 +27,7 @@ internal sealed class FileReconciler<TKey, TRecord, TProjection>(
     where TRecord : class, IRecord<TKey>
     where TKey : notnull
 {
-    public async Task<ProcessResult> ReconcileAsync(string path, CancellationToken ct)
+    public async Task<RetryDecision> ReconcileAsync(string path, CancellationToken ct)
     {
         using var sharedIndexScope = await index.EnterSharedScopeAsync(ct);
         using var _ = logger.BeginMethodScope();
@@ -45,17 +45,17 @@ internal sealed class FileReconciler<TKey, TRecord, TProjection>(
         try
         {
             var status = await ReconcileCoreAsync(state, ct);
-            var processResult = GetProcessResult(status);
+            var retryDecision = GetRetryDecision(status);
             logger.LogDebug(
-                "Reconciliation finished: file=\"{File}\" indexId={IndexId} diskId={DiskId} fingerprint=\"{Fingerprint}\" status={Status} processResult={ProcessResult} durationMs={DurationMs}",
+                "Reconciliation finished: file=\"{File}\" indexId={IndexId} diskId={DiskId} fingerprint=\"{Fingerprint}\" status={Status} retryDecision={RetryDecision} durationMs={DurationMs}",
                 state.FileName,
                 state.IndexId,
                 state.DiskId,
                 FormatFingerprint(state.Fingerprint),
                 status,
-                processResult,
+                retryDecision,
                 stopwatch.ElapsedMilliseconds);
-            return processResult;
+            return retryDecision;
         }
         catch (OperationCanceledException)
         {
@@ -71,7 +71,7 @@ internal sealed class FileReconciler<TKey, TRecord, TProjection>(
                 state.DiskId,
                 FormatFingerprint(state.Fingerprint),
                 stopwatch.ElapsedMilliseconds);
-            return ProcessResult.Complete;
+            return RetryDecision.Complete;
         }
     }
 
@@ -367,14 +367,14 @@ internal sealed class FileReconciler<TKey, TRecord, TProjection>(
 
     private static object? GetLogValue(Option<TKey> value) => value.HasValue ? value.Value : null;
 
-    private static ProcessResult GetProcessResult(StopStatus status)
+    private static RetryDecision GetRetryDecision(StopStatus status)
     {
         return status switch
         {
-            StopStatus.FileAccessTransientFailure => ProcessResult.RetryWithBackoff,
+            StopStatus.FileAccessTransientFailure => RetryDecision.RetryWithBackoff,
             StopStatus.FileChangedDuringReconciliation or
-                StopStatus.IndexChangedDuringReconciliation => ProcessResult.RetryWithMinBackoff,
-            _ => ProcessResult.Complete
+                StopStatus.IndexChangedDuringReconciliation => RetryDecision.RetryWithMinBackoff,
+            _ => RetryDecision.Complete
         };
     }
 

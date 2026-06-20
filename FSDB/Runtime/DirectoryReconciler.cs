@@ -23,7 +23,7 @@ internal sealed class DirectoryReconciler<TKey, TRecord, TProjection>(
     where TRecord : class, IRecord<TKey>
     where TKey : notnull
 {
-    public async Task<ProcessResult> ReconcileAsync(CancellationToken ct = default)
+    public async Task<RetryDecision> ReconcileAsync(CancellationToken ct = default)
     {
         using var _ = logger.BeginMethodScope();
         var stopwatch = Stopwatch.StartNew();
@@ -43,12 +43,12 @@ internal sealed class DirectoryReconciler<TKey, TRecord, TProjection>(
                 exclusiveIndexScope.Clear();
             }
 
-            return ProcessResult.Complete;
+            return RetryDecision.Complete;
         }
         catch (Exception ex)
         {
             logger.LogError(ex, "Rescan directory read failed, will retry: path=\"{Path}\"", tablePath);
-            return ProcessResult.RetryWithBackoff;
+            return RetryDecision.RetryWithBackoff;
         }
 
         HashSet<string> processingFileNames;
@@ -63,7 +63,7 @@ internal sealed class DirectoryReconciler<TKey, TRecord, TProjection>(
         {
             var filePath = Path.Combine(tablePath, fileName);
             var result = await fileReconciler.ReconcileAsync(filePath, ct);
-            if (result != ProcessResult.Complete)
+            if (result != RetryDecision.Complete)
             {
                 requestFileReconcile(filePath);
             }
@@ -79,6 +79,6 @@ internal sealed class DirectoryReconciler<TKey, TRecord, TProjection>(
                 stopwatch.ElapsedMilliseconds);
         }
 
-        return ProcessResult.Complete;
+        return RetryDecision.Complete;
     }
 }

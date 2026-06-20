@@ -19,5 +19,5 @@ public sealed class DatabaseOptions
     public Func<IFileStore>? FileStoreFactory { get; set; }
 
     public Func<FileStoreRetryContext, IFileStore>? FileStoreRetryFactory { get; set; }
-    public Func<ILoggerFactory, IWorkScheduler<string>>? WorkSchedulerFactory { get; set; }
+    public Func<ILoggerFactory, IRetryScheduler<string>>? RetrySchedulerFactory { get; set; }
 }

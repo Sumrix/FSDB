@@ -15,13 +15,13 @@ public class DirectoryReconcilerTests
         await using var ctx = await ReconcilerTestContext.CreateAsync();
         var filePath = await ctx.WriteRecordAsync("alpha.json", new("id-1", 1, "value"));
         ctx.RequestFileReconcile(filePath);
-        await ctx.Scheduler.RunAllAsync();
+        await ctx.RetryScheduler.RunAllAsync();
         AssertNoRetry(ctx);
 
         Directory.Delete(ctx.TablePath, recursive: true);
 
         ctx.RequestDirectoryReconcile();
-        await ctx.Scheduler.RunAllAsync();
+        await ctx.RetryScheduler.RunAllAsync();
         AssertNoRetry(ctx);
 
         using var scope = await ctx.Index.EnterSharedScopeAsync();
@@ -37,13 +37,13 @@ public class DirectoryReconcilerTests
         var bPath = await ctx.WriteRecordAsync("b.json", new("id-b", 1, "two"));
 
         ctx.RequestDirectoryReconcile();
-        await ctx.Scheduler.RunAllAsync();
+        await ctx.RetryScheduler.RunAllAsync();
         AssertNoRetry(ctx);
 
         File.Delete(bPath);
 
         ctx.RequestDirectoryReconcile();
-        await ctx.Scheduler.RunAllAsync();
+        await ctx.RetryScheduler.RunAllAsync();
         AssertNoRetry(ctx);
 
         using var scope = await ctx.Index.EnterSharedScopeAsync();
@@ -63,7 +63,7 @@ public class DirectoryReconcilerTests
         await File.WriteAllTextAsync(Path.Combine(ctx.TablePath, "broken.json"), "{ not json");
 
         ctx.RequestDirectoryReconcile();
-        await ctx.Scheduler.RunAllAsync();
+        await ctx.RetryScheduler.RunAllAsync();
         AssertNoRetry(ctx);
 
         using (var scope = await ctx.Index.EnterSharedScopeAsync())
@@ -94,7 +94,7 @@ public class DirectoryReconcilerTests
         File.SetLastWriteTimeUtc(bPath, new DateTime(2024, 1, 1, 0, 0, 1, DateTimeKind.Utc));
 
         ctx.RequestDirectoryReconcile();
-        await ctx.Scheduler.RunAllAsync();
+        await ctx.RetryScheduler.RunAllAsync();
         AssertNoRetry(ctx);
 
         using var scope = await ctx.Index.EnterSharedScopeAsync();
@@ -107,5 +107,5 @@ public class DirectoryReconcilerTests
         Assert.Equal("two", new ProjectionIndexView<string, string>(ctx.Index.Records)["shared-id"]);
     }
 
-    private static void AssertNoRetry(ReconcilerTestContext ctx) => Assert.Equal(0, ctx.Scheduler.PendingCount);
+    private static void AssertNoRetry(ReconcilerTestContext ctx) => Assert.Equal(0, ctx.RetryScheduler.PendingCount);
 }

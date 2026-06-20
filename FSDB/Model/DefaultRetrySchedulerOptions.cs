@@ -1,6 +1,6 @@
 namespace FSDB.Model;
 
-public sealed class DefaultWorkSchedulerOptions
+public sealed class DefaultRetrySchedulerOptions
 {
     public int IntervalMs { get; init; } = 100;
     public int MaxRetryIntervals { get; init; } = 10;

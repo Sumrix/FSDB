@@ -56,25 +56,25 @@ public sealed class FileSystemDatabaseStartTests
     }
 
     [Fact]
-    public async Task StartAsync_WithWorkSchedulerFactory_DisposesOwnedInstance()
+    public async Task StartAsync_WithRetrySchedulerFactory_DisposesOwnedInstance()
     {
         var rootPath = Directory.CreateTempSubdirectory().FullName;
-        TrackingWorkScheduler? scheduler = null;
+        TrackingRetryScheduler? retryScheduler = null;
 
         try
         {
             var options = new DatabaseOptions
             {
-                WorkSchedulerFactory = _ => scheduler = new TrackingWorkScheduler()
+                RetrySchedulerFactory = _ => retryScheduler = new TrackingRetryScheduler()
             };
 
             await using (await FileSystemDatabase.StartAsync(rootPath, [CreateTableDefinition()], options))
             {
             }
 
-            Assert.NotNull(scheduler);
-            Assert.True(scheduler!.Disposed);
-            Assert.True(scheduler.EnqueueCount > 0);
+            Assert.NotNull(retryScheduler);
+            Assert.True(retryScheduler!.Disposed);
+            Assert.True(retryScheduler.EnqueueCount > 0);
         }
         finally
         {
@@ -181,13 +181,13 @@ public sealed class FileSystemDatabaseStartTests
     }
 
     [Fact]
-    public async Task StartAsync_WithDefaultSchedulerFactory_AssignsFactoryToPassedOptions()
+    public async Task StartAsync_WithDefaultRetrySchedulerFactory_AssignsFactoryToPassedOptions()
     {
         var rootPath = Directory.CreateTempSubdirectory().FullName;
 
         try
         {
-            var schedulerOptions = new DefaultWorkSchedulerOptions
+            var retrySchedulerOptions = new DefaultRetrySchedulerOptions
             {
                 IntervalMs = 100,
                 MaxRetryIntervals = 10,
@@ -195,8 +195,8 @@ public sealed class FileSystemDatabaseStartTests
             };
             var options = new DatabaseOptions
             {
-                WorkSchedulerFactory = loggerFactory => FileSystemDatabase.CreateDefaultWorkScheduler(
-                    schedulerOptions,
+                RetrySchedulerFactory = loggerFactory => FileSystemDatabase.CreateDefaultRetryScheduler(
+                    retrySchedulerOptions,
                     loggerFactory)
             };
 
@@ -209,7 +209,7 @@ public sealed class FileSystemDatabaseStartTests
             await table.UpsertAsync(new PlainTestRecord("id-1", "value-1"));
 
             Assert.Equal("value-1", (await table.GetAsync("id-1"))?.Value);
-            Assert.NotNull(options.WorkSchedulerFactory);
+            Assert.NotNull(options.RetrySchedulerFactory);
         }
         finally
         {
@@ -218,7 +218,7 @@ public sealed class FileSystemDatabaseStartTests
     }
 
     [Fact]
-    public async Task CreateDefaultWorkScheduler_WithOptions_CreatesUsableScheduler()
+    public async Task CreateDefaultRetryScheduler_WithOptions_CreatesUsableScheduler()
     {
         var rootPath = Directory.CreateTempSubdirectory().FullName;
 
@@ -226,8 +226,8 @@ public sealed class FileSystemDatabaseStartTests
         {
             var options = new DatabaseOptions
             {
-                WorkSchedulerFactory = loggerFactory => FileSystemDatabase.CreateDefaultWorkScheduler(
-                    new DefaultWorkSchedulerOptions
+                RetrySchedulerFactory = loggerFactory => FileSystemDatabase.CreateDefaultRetryScheduler(
+                    new DefaultRetrySchedulerOptions
                     {
                         IntervalMs = 100,
                         MaxRetryIntervals = 10,
@@ -253,19 +253,19 @@ public sealed class FileSystemDatabaseStartTests
     }
 
     [Fact]
-    public async Task StartAsync_WithDefaultSchedulerFactory_DoesNotUsePreviousSchedulerFactory()
+    public async Task StartAsync_WithDefaultRetrySchedulerFactory_DoesNotUsePreviousRetrySchedulerFactory()
     {
         var rootPath = Directory.CreateTempSubdirectory().FullName;
-        TrackingWorkScheduler? originalScheduler = null;
-        var originalFactory = new Func<Microsoft.Extensions.Logging.ILoggerFactory, IWorkScheduler<string>>(
-            _ => originalScheduler = new TrackingWorkScheduler());
+        TrackingRetryScheduler? originalScheduler = null;
+        var originalFactory = new Func<Microsoft.Extensions.Logging.ILoggerFactory, IRetryScheduler<string>>(
+            _ => originalScheduler = new TrackingRetryScheduler());
 
         try
         {
             var options = new DatabaseOptions
             {
-                WorkSchedulerFactory = loggerFactory => FileSystemDatabase.CreateDefaultWorkScheduler(
-                    new DefaultWorkSchedulerOptions(),
+                RetrySchedulerFactory = loggerFactory => FileSystemDatabase.CreateDefaultRetryScheduler(
+                    new DefaultRetrySchedulerOptions(),
                     loggerFactory)
             };
 
@@ -274,8 +274,8 @@ public sealed class FileSystemDatabaseStartTests
             }
 
             Assert.Null(originalScheduler);
-            Assert.NotNull(options.WorkSchedulerFactory);
-            Assert.NotSame(originalFactory, options.WorkSchedulerFactory);
+            Assert.NotNull(options.RetrySchedulerFactory);
+            Assert.NotSame(originalFactory, options.RetrySchedulerFactory);
         }
         finally
         {
@@ -289,12 +289,12 @@ public sealed class FileSystemDatabaseStartTests
             jsonOptions: TestsJsonContext.Default.Options);
     }
 
-    private sealed class TrackingWorkScheduler : IWorkScheduler<string>
+    private sealed class TrackingRetryScheduler : IRetryScheduler<string>
     {
         public bool Disposed { get; private set; }
         public int EnqueueCount { get; private set; }
 
-        public void Enqueue(string value, Func<string, CancellationToken, Task<ProcessResult>> processor)
+        public void Enqueue(string value, Func<string, CancellationToken, Task<RetryDecision>> processor)
         {
             ObjectDisposedException.ThrowIf(Disposed, this);
             EnqueueCount++;

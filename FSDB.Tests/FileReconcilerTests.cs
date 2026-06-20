@@ -18,7 +18,7 @@ public class FileReconcilerTests
         var filePath = await ctx.WriteRecordAsync("alpha.json", new("id-1", 1, "value"));
 
         ctx.RequestFileReconcile(filePath);
-        await ctx.Scheduler.RunAllAsync();
+        await ctx.RetryScheduler.RunAllAsync();
         AssertNoRetry(ctx);
 
         using var scope = await ctx.Index.EnterSharedScopeAsync();
@@ -37,13 +37,13 @@ public class FileReconcilerTests
         await using var ctx = await ReconcilerTestContext.CreateAsync();
         var filePath = await ctx.WriteRecordAsync("alpha.json", new("id-1", 1, "value"));
         ctx.RequestFileReconcile(filePath);
-        await ctx.Scheduler.RunAllAsync();
+        await ctx.RetryScheduler.RunAllAsync();
         AssertNoRetry(ctx);
 
         File.Delete(filePath);
 
         ctx.RequestFileReconcile(filePath);
-        await ctx.Scheduler.RunAllAsync();
+        await ctx.RetryScheduler.RunAllAsync();
         AssertNoRetry(ctx);
 
         using var scope = await ctx.Index.EnterSharedScopeAsync();
@@ -59,7 +59,7 @@ public class FileReconcilerTests
         await using var ctx = await ReconcilerTestContext.CreateAsync(scriptedStore);
         var filePath = await ctx.WriteRecordAsync("alpha.json", new("id-1", 1, "value"));
         ctx.RequestFileReconcile(filePath);
-        await ctx.Scheduler.RunAllAsync();
+        await ctx.RetryScheduler.RunAllAsync();
         AssertNoRetry(ctx);
 
         scriptedStore.EnqueueFingerprintResult(
@@ -74,7 +74,7 @@ public class FileReconcilerTests
             new FileFingerprint(null, null, Exists: false));
 
         ctx.RequestFileReconcile(filePath);
-        await ctx.Scheduler.RunAllAsync();
+        await ctx.RetryScheduler.RunAllAsync();
         AssertNoRetry(ctx);
 
         using var scope = await ctx.Index.EnterSharedScopeAsync();
@@ -88,13 +88,13 @@ public class FileReconcilerTests
         await using var ctx = await ReconcilerTestContext.CreateAsync();
         var filePath = await ctx.WriteRecordAsync("alpha.json", new("id-1", 1, "valid"));
         ctx.RequestFileReconcile(filePath);
-        await ctx.Scheduler.RunAllAsync();
+        await ctx.RetryScheduler.RunAllAsync();
         AssertNoRetry(ctx);
 
         await File.WriteAllTextAsync(filePath, "{ invalid json");
 
         ctx.RequestFileReconcile(filePath);
-        await ctx.Scheduler.RunAllAsync();
+        await ctx.RetryScheduler.RunAllAsync();
         AssertNoRetry(ctx);
 
         using var scope = await ctx.Index.EnterSharedScopeAsync();
@@ -113,7 +113,7 @@ public class FileReconcilerTests
         await using var ctx = await ReconcilerTestContext.CreateAsync(scriptedStore);
         var filePath = await ctx.WriteRecordAsync("alpha.json", new("id-1", 1, "value"));
         ctx.RequestFileReconcile(filePath);
-        await ctx.Scheduler.RunAllAsync();
+        await ctx.RetryScheduler.RunAllAsync();
         AssertNoRetry(ctx);
 
         var exception = new UnauthorizedAccessException("access denied");
@@ -121,7 +121,7 @@ public class FileReconcilerTests
         scriptedStore.EnqueueReadAccessResult(filePath, FileErrorPersistence.Persistent, exception);
 
         ctx.RequestFileReconcile(filePath);
-        await ctx.Scheduler.RunAllAsync();
+        await ctx.RetryScheduler.RunAllAsync();
         AssertNoRetry(ctx);
 
         using var scope = await ctx.Index.EnterSharedScopeAsync();
@@ -141,13 +141,13 @@ public class FileReconcilerTests
         await using var ctx = await ReconcilerTestContext.CreateAsync();
         var filePath = await ctx.WriteRecordAsync("alpha.json", new("id-old", 1, "one"));
         ctx.RequestFileReconcile(filePath);
-        await ctx.Scheduler.RunAllAsync();
+        await ctx.RetryScheduler.RunAllAsync();
         AssertNoRetry(ctx);
 
         await ctx.WriteRecordAsync("alpha.json", new("id-new-longer", 1, "two"));
 
         ctx.RequestFileReconcile(filePath);
-        await ctx.Scheduler.RunAllAsync();
+        await ctx.RetryScheduler.RunAllAsync();
         AssertNoRetry(ctx);
 
         using var scope = await ctx.Index.EnterSharedScopeAsync();
@@ -165,7 +165,7 @@ public class FileReconcilerTests
         var filePath = await ctx.WriteLegacyRecordAsync("alpha.json", new("id-1", 0, "legacy"));
 
         ctx.RequestFileReconcile(filePath);
-        await ctx.Scheduler.RunAllAsync();
+        await ctx.RetryScheduler.RunAllAsync();
         AssertNoRetry(ctx);
 
         using (var scope = await ctx.Index.EnterSharedScopeAsync())
@@ -196,12 +196,12 @@ public class FileReconcilerTests
             new FileFingerprint(DateTime.UtcNow.AddMinutes(1), 999, Exists: true));
 
         ctx.RequestFileReconcile(filePath);
-        var hadWork = await ctx.Scheduler.RunNextAsync();
+        var hadWork = await ctx.RetryScheduler.RunNextAsync();
 
         Assert.True(hadWork);
-        Assert.Equal(1, ctx.Scheduler.PendingCount);
+        Assert.Equal(1, ctx.RetryScheduler.PendingCount);
 
-        await ctx.Scheduler.RunAllAsync();
+        await ctx.RetryScheduler.RunAllAsync();
         AssertNoRetry(ctx);
 
         using var scope = await ctx.Index.EnterSharedScopeAsync();
@@ -222,13 +222,13 @@ public class FileReconcilerTests
         await using (var fileLock = new FileStream(filePath, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
         {
             ctx.RequestFileReconcile(filePath);
-            var hadWork = await ctx.Scheduler.RunNextAsync();
+            var hadWork = await ctx.RetryScheduler.RunNextAsync();
 
             Assert.True(hadWork);
-            Assert.Equal(1, ctx.Scheduler.PendingCount);
+            Assert.Equal(1, ctx.RetryScheduler.PendingCount);
         }
 
-        await ctx.Scheduler.RunAllAsync();
+        await ctx.RetryScheduler.RunAllAsync();
         AssertNoRetry(ctx);
 
         using var scope = await ctx.Index.EnterSharedScopeAsync();
@@ -250,7 +250,7 @@ public class FileReconcilerTests
                 new IOException("transient write"))));
 
         ctx.RequestFileReconcile(filePath);
-        await ctx.Scheduler.RunAllAsync();
+        await ctx.RetryScheduler.RunAllAsync();
         AssertNoRetry(ctx);
 
         using (var scope = await ctx.Index.EnterSharedScopeAsync())
@@ -266,7 +266,7 @@ public class FileReconcilerTests
         File.SetLastWriteTimeUtc(filePath, DateTime.UtcNow.AddMinutes(1));
 
         ctx.RequestFileReconcile(filePath);
-        await ctx.Scheduler.RunAllAsync();
+        await ctx.RetryScheduler.RunAllAsync();
         AssertNoRetry(ctx);
 
         var persisted = await File.ReadAllTextAsync(filePath);
@@ -275,5 +275,5 @@ public class FileReconcilerTests
         Assert.DoesNotContain("LegacyValue", persisted, StringComparison.Ordinal);
     }
 
-    private static void AssertNoRetry(ReconcilerTestContext ctx) => Assert.Equal(0, ctx.Scheduler.PendingCount);
+    private static void AssertNoRetry(ReconcilerTestContext ctx) => Assert.Equal(0, ctx.RetryScheduler.PendingCount);
 }

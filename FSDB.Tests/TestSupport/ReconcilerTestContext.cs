@@ -15,25 +15,25 @@ internal sealed class ReconcilerTestContext : IAsyncDisposable
 {
     private readonly string _rootPath;
     private readonly string _tablePath;
-    private readonly InlineWorkScheduler _scheduler;
+    private readonly InlineRetryScheduler _retryScheduler;
     private readonly FileReconciler<string, TestRecord, string> _fileReconciler;
     private readonly DirectoryReconciler<string, TestRecord, string> _directoryReconciler;
 
     private ReconcilerTestContext(
         string rootPath,
         string tablePath,
-        InlineWorkScheduler scheduler,
+        InlineRetryScheduler retryScheduler,
         TableIndex<string, TestRecord, string> index,
         FileReconciler<string, TestRecord, string> fileReconciler,
         DirectoryReconciler<string, TestRecord, string> directoryReconciler)
     {
         _rootPath = rootPath;
         _tablePath = tablePath;
-        _scheduler = scheduler;
+        _retryScheduler = retryScheduler;
         _fileReconciler = fileReconciler;
         _directoryReconciler = directoryReconciler;
         TablePath = tablePath;
-        Scheduler = scheduler;
+        RetryScheduler = retryScheduler;
         Index = index;
     }
 
@@ -41,16 +41,16 @@ internal sealed class ReconcilerTestContext : IAsyncDisposable
 
     public TableIndex<string, TestRecord, string> Index { get; }
 
-    public InlineWorkScheduler Scheduler { get; }
+    public InlineRetryScheduler RetryScheduler { get; }
 
     public void RequestFileReconcile(string path)
     {
-        _scheduler.Enqueue(path, _fileReconciler.ReconcileAsync);
+        _retryScheduler.Enqueue(path, _fileReconciler.ReconcileAsync);
     }
 
     public void RequestDirectoryReconcile()
     {
-        _scheduler.Enqueue(_tablePath, (_, ct) => _directoryReconciler.ReconcileAsync(ct));
+        _retryScheduler.Enqueue(_tablePath, (_, ct) => _directoryReconciler.ReconcileAsync(ct));
     }
 
     public static async Task<ReconcilerTestContext> CreateAsync(IFileStore? fileStore = null)
@@ -83,7 +83,7 @@ internal sealed class ReconcilerTestContext : IAsyncDisposable
 
         var effectiveFileStore = fileStore ?? new FileStore();
         var store = new RecordStore<string, TestRecord>(codec, effectiveFileStore);
-        var scheduler = new InlineWorkScheduler();
+        var retryScheduler = new InlineRetryScheduler();
         var fileReconciler = new FileReconciler<string, TestRecord, string>(
             table,
             effectiveFileStore,
@@ -94,10 +94,16 @@ internal sealed class ReconcilerTestContext : IAsyncDisposable
             tablePath,
             index,
             fileReconciler,
-            path => scheduler.Enqueue(path, fileReconciler.ReconcileAsync),
+            path => retryScheduler.Enqueue(path, fileReconciler.ReconcileAsync),
             NullLogger<DirectoryReconciler<string, TestRecord, string>>.Instance);
 
-        return new ReconcilerTestContext(rootPath, tablePath, scheduler, index, fileReconciler, directoryReconciler);
+        return new ReconcilerTestContext(
+            rootPath,
+            tablePath,
+            retryScheduler,
+            index,
+            fileReconciler,
+            directoryReconciler);
     }
 
     public async Task<string> WriteRecordAsync(string fileName, TestRecord record)
@@ -116,7 +122,7 @@ internal sealed class ReconcilerTestContext : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
-        Scheduler.Dispose();
+        RetryScheduler.Dispose();
         await Index.DisposeAsync();
         try
         {

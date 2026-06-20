@@ -26,7 +26,7 @@ public class TableEngine<TKey, TRecord, TProjection> :
     where TKey : notnull
 {
     private readonly string _tablePath;
-    private readonly IWorkScheduler<string> _scheduler;
+    private readonly IRetryScheduler<string> _retryScheduler;
     private readonly TableIndex<TKey, TRecord, TProjection> _index;
     private readonly FileReconciler<TKey, TRecord, TProjection> _fileReconciler;
     private readonly DirectoryReconciler<TKey, TRecord, TProjection> _directoryReconciler;
@@ -43,7 +43,7 @@ public class TableEngine<TKey, TRecord, TProjection> :
 
     private TableEngine(
         string tablePath,
-        IWorkScheduler<string> scheduler,
+        IRetryScheduler<string> retryScheduler,
         TableIndex<TKey, TRecord, TProjection> index,
         FileReconciler<TKey, TRecord, TProjection> fileReconciler,
         DirectoryReconciler<TKey, TRecord, TProjection> directoryReconciler,
@@ -52,7 +52,7 @@ public class TableEngine<TKey, TRecord, TProjection> :
         PathWatcher watcher)
     {
         _tablePath = tablePath;
-        _scheduler = scheduler;
+        _retryScheduler = retryScheduler;
         _index = index;
         _fileReconciler = fileReconciler;
         _directoryReconciler = directoryReconciler;
@@ -70,7 +70,7 @@ public class TableEngine<TKey, TRecord, TProjection> :
         string indexFilePath,
         TableDefinition<TKey, TRecord, TProjection> definition,
         IFileStore storage,
-        IWorkScheduler<string> scheduler,
+        IRetryScheduler<string> retryScheduler,
         DatabaseOptions options,
         ILoggerFactory loggerFactory,
         CancellationToken ct = default)
@@ -104,7 +104,7 @@ public class TableEngine<TKey, TRecord, TProjection> :
             tablePath,
             index,
             fileReconciler,
-            path => scheduler.Enqueue(path, fileReconciler.ReconcileAsync),
+            path => retryScheduler.Enqueue(path, fileReconciler.ReconcileAsync),
             loggerFactory.CreateLogger<DirectoryReconciler<TKey, TRecord, TProjection>>());
 
         var fileProcessor = new FileOperationProcessor<TKey, TRecord, TProjection>(
@@ -113,7 +113,7 @@ public class TableEngine<TKey, TRecord, TProjection> :
             index,
             operationStore,
             options.MaxFileNameReserveAttempts,
-            path => scheduler.Enqueue(path, fileReconciler.ReconcileAsync),
+            path => retryScheduler.Enqueue(path, fileReconciler.ReconcileAsync),
             loggerFactory.CreateLogger<FileOperationProcessor<TKey, TRecord, TProjection>>());
 
         var dbProcessor = new DatabaseOperationProcessor<TKey, TRecord, TProjection>(
@@ -125,7 +125,7 @@ public class TableEngine<TKey, TRecord, TProjection> :
             loggerFactory.CreateLogger<PathWatcher>());
         var tableEngine = new TableEngine<TKey, TRecord, TProjection>(
             tablePath,
-            scheduler,
+            retryScheduler,
             index,
             fileReconciler,
             directoryReconciler,
@@ -269,20 +269,20 @@ public class TableEngine<TKey, TRecord, TProjection> :
 
     public void RequestDirectoryReconcile()
     {
-        _scheduler.Enqueue(_tablePath, ReconcileDirectoryAsync);
+        _retryScheduler.Enqueue(_tablePath, ReconcileDirectoryAsync);
     }
 
     private void RequestFileReconcile(string path)
     {
-        _scheduler.Enqueue(path, ReconcileFileAsync);
+        _retryScheduler.Enqueue(path, ReconcileFileAsync);
     }
 
-    private Task<ProcessResult> ReconcileFileAsync(string path, CancellationToken ct)
+    private Task<RetryDecision> ReconcileFileAsync(string path, CancellationToken ct)
     {
         return _fileReconciler.ReconcileAsync(path, ct);
     }
 
-    private Task<ProcessResult> ReconcileDirectoryAsync(string _, CancellationToken ct)
+    private Task<RetryDecision> ReconcileDirectoryAsync(string _, CancellationToken ct)
     {
         return _directoryReconciler.ReconcileAsync(ct);
     }
