@@ -7,12 +7,11 @@ namespace FSDB.FileStorage;
 /// </summary>
 public readonly record struct FileReadResult<T>(
     T? Value,
-    FileFingerprint? Fingerprint,
+    FileFingerprint Fingerprint,
     FileError? Error = null) : IFileOperationResult
 {
-    [MemberNotNullWhen(true, nameof(Fingerprint))]
     public bool IsFileAccessSuccessful => Error?.Reason != FileErrorReason.Unavailable;
 
-    [MemberNotNullWhen(true, nameof(Value), nameof(Fingerprint))]
-    public bool IsSuccess => Error is null && Fingerprint is { Exists: true };
+    [MemberNotNullWhen(true, nameof(Value))]
+    public bool IsSuccess => Error is null && Fingerprint.Exists;
 }

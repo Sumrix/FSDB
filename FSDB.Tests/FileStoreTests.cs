@@ -25,7 +25,7 @@ public class FileStoreTests
 
             Assert.True(result.IsFileAccessSuccessful);
             Assert.False(result.IsSuccess);
-            Assert.NotNull(result.Fingerprint);
+            Assert.True(result.Fingerprint.Exists);
             var exception = Assert.IsType<InvalidOperationException>(result.Error?.Exception);
             Assert.Equal("boom", exception.Message);
         }

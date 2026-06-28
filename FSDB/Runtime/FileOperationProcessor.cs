@@ -56,7 +56,7 @@ internal class FileOperationProcessor<TKey, TRecord, TProjection>(
                 readResult.Error.Reason,
                 readResult.Error.Persistence);
 
-            var fingerprint = readResult.Fingerprint ?? recordState.Files[fileName].Fingerprint;
+            var fingerprint = readResult.Fingerprint;
             var errorUpsertResult = recordScope.Upsert(fileName, fingerprint, readResult.Error.ToErrorInfo());
             if (errorUpsertResult == IndexOperationResult.BlockedByAnotherId)
             {
@@ -71,7 +71,7 @@ internal class FileOperationProcessor<TKey, TRecord, TProjection>(
             return new ReadResult<TRecord>(null, readResult.Error, fileName);
         }
 
-        var readFingerprint = readResult.Fingerprint!.Value;
+        var readFingerprint = readResult.Fingerprint;
         if (!readFingerprint.Exists)
         {
             _logger.LogDebug(

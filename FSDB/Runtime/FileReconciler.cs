@@ -186,7 +186,7 @@ internal sealed class FileReconciler<TKey, TRecord, TProjection>(
             }
         }
 
-        state.Fingerprint = readResult.Fingerprint!.Value;
+        state.Fingerprint = readResult.Fingerprint;
 
         if (!state.Fingerprint.Exists)
         {

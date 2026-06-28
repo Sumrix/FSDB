@@ -52,13 +52,13 @@ internal sealed class ScriptedFileStore : IFileStore
         FileErrorPersistence persistence,
         Exception? exception = null)
     {
-        EnqueueReadAccessResult(path, persistence, fingerprint: null, exception);
+        EnqueueReadAccessResult(path, persistence, _inner.GetFileFingerprint(path), exception);
     }
 
     public void EnqueueReadAccessResult(
         string path,
         FileErrorPersistence persistence,
-        FileFingerprint? fingerprint,
+        FileFingerprint fingerprint,
         Exception? exception = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(path);
@@ -130,7 +130,7 @@ internal sealed class ScriptedFileStore : IFileStore
 
     private readonly record struct FileReadFailureResult(
         FileErrorPersistence Persistence,
-        FileFingerprint? Fingerprint,
+        FileFingerprint Fingerprint,
         Exception? Exception);
 
     private static FileError? CreateError(FileErrorPersistence persistence, Exception? exception)

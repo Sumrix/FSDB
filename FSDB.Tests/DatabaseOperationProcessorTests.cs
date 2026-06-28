@@ -501,7 +501,7 @@ public class DatabaseOperationProcessorTests
                 ? inner.ReadAsync(path, parseAction, ct)
                 : Task.FromResult(new FileReadResult<T>(
                     default,
-                    null,
+                    inner.GetFileFingerprint(path),
                     ToFileError(ex)));
         }
 

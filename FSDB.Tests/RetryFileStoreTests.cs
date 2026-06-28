@@ -94,7 +94,7 @@ public class RetryFileStoreTests
         {
             return Task.FromResult(new FileReadResult<T>(
                 default,
-                null,
+                default,
                 new FileError(
                     FileErrorReason.Unavailable,
                     FileErrorPersistence.Persistent,

@@ -52,21 +52,30 @@ public sealed class FileStore(ILogger<FileStore>? logger = null) : IFileStore
                 default,
                 new FileFingerprint(null, null, Exists: false));
         }
-        catch (IOException ex) when (IoErrorCodes.IsTransient(ex))
-        {
-            _logger.LogWarning(ex, "Read transient failure: path=\"{Path}\"", path);
-            return new FileReadResult<T>(
-                default,
-                null,
-                new FileError(FileErrorReason.Unavailable, FileErrorPersistence.Transient, ex));
-        }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Read failed: path=\"{Path}\"", path);
-            return new FileReadResult<T>(
-                default,
-                null,
-                new FileError(FileErrorReason.Unavailable, FileErrorPersistence.Persistent, ex));
+            var fingerprint = GetFileFingerprint(path);
+            if (!fingerprint.Exists)
+            {
+                return new FileReadResult<T>(default, fingerprint);
+            }
+
+            if (ex is IOException ioEx && IoErrorCodes.IsTransient(ioEx))
+            {
+                _logger.LogWarning(ex, "Read transient failure: path=\"{Path}\"", path);
+                return new FileReadResult<T>(
+                    default,
+                    fingerprint,
+                    new FileError(FileErrorReason.Unavailable, FileErrorPersistence.Transient, ex));
+            }
+            else
+            {
+                _logger.LogError(ex, "Read failed: path=\"{Path}\"", path);
+                return new FileReadResult<T>(
+                    default,
+                    fingerprint,
+                    new FileError(FileErrorReason.Unavailable, FileErrorPersistence.Persistent, ex));
+            }
         }
     }
 
@@ -182,10 +191,17 @@ public sealed class FileStore(ILogger<FileStore>? logger = null) : IFileStore
 
     public FileFingerprint GetFileFingerprint(string path)
     {
-        var info = new FileInfo(path);
-        return !info.Exists
-            ? new FileFingerprint(null, null, false)
-            : new FileFingerprint(info.LastWriteTimeUtc, info.Length, true);
+        try
+        {
+            var info = new FileInfo(path);
+            return !info.Exists
+                ? new FileFingerprint(null, null, false)
+                : new FileFingerprint(info.LastWriteTimeUtc, info.Length, true);
+        }
+        catch
+        {
+            return new FileFingerprint(null, null, false);
+        }
     }
 
     private static FileFingerprint GetFileFingerprint(FileStream fs)
