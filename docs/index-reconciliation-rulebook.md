@@ -79,7 +79,7 @@ From the available inputs, the decision algorithm produces one of these results:
 
 #### Update the Index
 
-`Skip` completes reconciliation without changing the index. Every other terminal decision changes the index and must be executed while holding all required id locks. The executable algorithm is defined in [Chapter 3. Algorithm Implementation](#chapter-3-algorithm-implementation).
+`Skip` completes reconciliation without changing the index. Every other terminal decision changes the index and must be executed while holding all required id locks. The executable algorithm is defined in [Chapter 4. Algorithm Implementation](#chapter-4-algorithm-implementation).
 
 ### Why the Decision Model Is Exhaustive
 
@@ -413,35 +413,129 @@ Use current GetState result -> PS, ES, indexed state
       └─ otherwise        -> UpsertError
 ```
 
-## Chapter 3. Algorithm Implementation
+## Chapter 3. Retry Decision
 
-This chapter describes the complete file-to-index reconciliation algorithm and its implementation.
+File reconciliation produces two independent decisions. The reconciliation decision from Chapter 2 determines whether and how the index should change. The retry decision determines whether the complete reconciliation operation should run again and, if so, which delay policy the scheduler should use.
+
+A retry does not imply that the reconciliation decision failed. For example, a transient read error can be written to an already known indexed id while still requesting another reconciliation attempt because the error may disappear. Conversely, a persistent read error can be represented in the index without requesting another attempt.
+
+Reconciliation can also discover that the held id locks do not cover the ids required by the current decision. The decision cannot be executed safely in that case, but the required ids are now known, so another attempt can acquire the correct locks.
+
+This chapter defines only the retry decision produced by reconciliation. It does not define the scheduler implementation. A scheduler may use any queue and backoff algorithm that preserves the following contract:
+
+| Decision | Meaning |
+| --- | --- |
+| `Complete` | Do not schedule another reconciliation attempt. |
+| `RetryWithBackoff` | Schedule another attempt using the continuing backoff progression. |
+| `RetryWithMinBackoff` | Schedule another attempt using the minimum delay and restart the backoff progression. |
+
+The retry decision is evaluated before every normal return from full or partial reconciliation. It uses the latest file read result available on that return path and whether an id lock mismatch prevented the reconciliation decision from being executed.
+
+As in Chapter 2, the complete input space is defined by a small set of values:
+
+| Code | Name | Values | Meaning |
+| --- | --- | --- | --- |
+| `EF` | Error File | `0`, `1` | Did the latest file read produce an error? |
+| `TE` | Transient Error | `0`, `1` | Is the file read error transient? |
+| `IM` | Id Lock Mismatch | `0`, `1` | Do the held id locks fail to cover the ids required by the reconciliation decision? |
+
+Sets:
+
+```text
+R = {EF, TE, IM}
+```
+
+The retry decision does not depend on which reconciliation decision was selected. It depends only on the read error and whether the selected decision can be executed under the held id locks.
+
+### Availability Rules
+
+| Values | Disables |
+| --- | --- |
+| `EF=0` | `{TE}` |
+
+#### Table 3.1. Retry Conditions
+
+```text
+Fixed = {}
+Disabled = {}
+Available = {EF, TE, IM}
+```
+
+| EF | IM | Disables | Available | Decision | Reason |
+| --- | --- | --- | --- | --- | --- |
+| 0 | 0 | `{TE}` | `{}` | `Complete` | No retry condition was observed. |
+| 0 | 1 | `{TE}` | `{}` | `RetryWithMinBackoff` | The decision cannot execute under the held locks, but the required ids are now known. Retry with the minimum delay to acquire the correct locks. |
+| 1 | 0 | `{}` | `{TE}` | [Table 3.2](#table-32-read-error-persistence) | |
+| 1 | 1 | `{}` | `{TE}` | [Table 3.3](#table-33-id-lock-mismatch-precedence) | |
+
+#### Table 3.2. Read Error Persistence
+
+```text
+Fixed = {EF=1, IM=0}
+Disabled = {}
+Available = {TE}
+```
+
+| TE | Disables | Available | Decision | Reason |
+| --- | --- | --- | --- | --- |
+| 0 | `{}` | `{}` | `Complete` | Automatically repeating reconciliation is not expected to resolve a persistent error. |
+| 1 | `{}` | `{}` | `RetryWithBackoff` | A transient error may disappear, so retry while continuing the backoff progression. |
+
+
+#### Table 3.3. Id Lock Mismatch Precedence
+
+```text
+Fixed = {EF=1, IM=1}
+Disabled = {}
+Available = {TE}
+```
+
+| TE | Disables | Available | Decision | Reason |
+| --- | --- | --- | --- | --- |
+| 0 | `{}` | `{}` | `RetryWithMinBackoff` | The error could not be written to the index under the held locks. The required ids are now known, so retry with the minimum delay. |
+| 1 | `{}` | `{}` | `RetryWithMinBackoff` | The id lock mismatch takes priority for this attempt. Retry with the minimum delay using the now-known ids. If the transient error persists after the lock mismatch is resolved, a later attempt will continue with regular backoff. |
+
+#### Compact Retry Decision Tree
+
+```text
+Retry inputs -> EF, TE, IM
+├─ IM=1             -> RetryWithMinBackoff
+├─ EF=1, TE=1       -> RetryWithBackoff
+└─ otherwise         -> Complete
+```
+
+The id lock mismatch branch comes first because it prevented the current reconciliation decision from executing and the required lock set is already known. Once that mismatch is resolved, a transient read error that remains follows the regular backoff branch on subsequent attempts.
+
+## Chapter 4. Algorithm Implementation
+
+This chapter combines the reconciliation decisions from Chapter 2 with the retry decisions from Chapter 3 and describes their implementation.
 
 ### Full Algorithm Scheme
 
-Given the model from Chapter 1 and the decision tables from Chapter 2, the algorithm pseudocode looks like this:
+Given the model from Chapter 1 and the decision tables from Chapters 2 and 3, the algorithm pseudocode looks like this:
 
 ```text
-Decision Reconcile(path, readCache, heldIdLocks)
-    decision = Decide(path, readCache)
+RetryDecision Reconcile(path, readCache, heldIdLocks)
+    pass = Decide(path, readCache)
 
-    switch decision kind
+    switch pass.decision kind
         case Skip:
-            return decision
+            return MakeRetryDecision(pass.lastReadResult, idLockMismatch: false)
 
         case Mutation:
-            requiredIdLocks = GetRequiredIdLocks(decision)
+            requiredIdLocks = GetRequiredIdLocks(pass.decision)
 
             if heldIdLocks is empty
                 acquiredLocks = Acquire(requiredIdLocks)
-                return Reconcile(path, readCache, acquiredLocks)
+                return Reconcile(path, pass.lastReadResult, acquiredLocks)
             else
                 if heldIdLocks.Covers(requiredIdLocks)
-                    return decision
+                    ExecuteDecision(pass.decision)
+                    return MakeRetryDecision(pass.lastReadResult, idLockMismatch: false)
                 else
-                    return Retry
+                    return MakeRetryDecision(pass.lastReadResult, idLockMismatch: true)
 
-Decision Decide(path, readCache)
+DecisionPass Decide(path, readCache)
     fingerprint = GetFingerprint(path)
     state = GetState(path)
 
@@ -449,9 +543,10 @@ Decision Decide(path, readCache)
 
     if decision is ReadFile
         readResult = ResolveReadFile(path, readCache, fingerprint)
-        return MakePostReadDecision(readResult, state)
+        decision = MakePostReadDecision(readResult, state)
+        return DecisionPass(decision, lastReadResult: readResult)
     else
-        return decision
+        return DecisionPass(decision, lastReadResult: readCache)
 
 ReadResult ResolveReadFile(path, readCache, fingerprint)
     if readCache matches fingerprint
@@ -460,11 +555,13 @@ ReadResult ResolveReadFile(path, readCache, fingerprint)
         return ReadFile(path)
 ```
 
-Here, `Reconcile` represents the general scheme for reconciling a file into the index. It calls the decision-making function, acquires id locks depending on the result, and runs the process one more time.
+Here, `Reconcile` represents the general scheme for reconciling a file into the index. It calls the reconciliation decision function, acquires id locks depending on the result, executes a confirmed mutation, and evaluates the retry decision before every normal return.
 
-`Decide` implements one complete decision pass. It collects the data for analysis, calls `MakePreReadDecision`, reads the file when required, and then calls `MakePostReadDecision`.
+`Decide` implements one complete reconciliation decision pass. It collects the data for analysis, calls `MakePreReadDecision`, reads the file when required, and then calls `MakePostReadDecision`. It carries the latest read result together with the reconciliation decision so the same observation can also participate in the retry decision. When the current pass does not read the file, the cached result from the previous pass remains the latest read result.
 
 `ResolveReadFile` reads the file or returns the cached state.
+
+`MakeRetryDecision` maps the available read error and id lock state through the tables from Chapter 3.
 
 ### Implementation Architecture
 
@@ -473,10 +570,11 @@ The implementation should map the rulebook concepts to a small set of classes. T
 ```text
 FileReconciler
 ├─ DecisionMaker
-└─ DecisionExecutor
+├─ DecisionExecutor
+└─ RetryDecisionMaker
 ```
 
-`FileReconciler` implements the file-to-index reconciliation process described in Chapter 3. It owns the scenario flow: collecting observations, coordinating locks, calling the decision maker, and asking the executor to apply confirmed terminal decisions.
+`FileReconciler` implements the file-to-index reconciliation process described in Chapter 4. It owns the scenario flow: collecting observations, coordinating locks, calling the decision maker, and asking the executor to apply confirmed terminal decisions.
 
 `FileReconciler` should expose two reconciliation entry points:
 
@@ -500,3 +598,5 @@ MakePostReadDecision(readObservation, indexedStateObservation)
 | `UpsertRecord` | Add or refresh readable record state. |
 | `UpsertError` | Add or refresh error state for the indexed id. |
 | `Delete`, then `UpsertRecord` | Move the path from the indexed id to the id read from the file. |
+
+`RetryDecisionMaker` owns the pure retry tables from Chapter 3. It has no file system access, no index mutation access, and no scheduling logic. Before each normal return, `FileReconciler` gives it the latest available read error and the id lock mismatch state. The resulting retry decision is returned to the scheduler.
