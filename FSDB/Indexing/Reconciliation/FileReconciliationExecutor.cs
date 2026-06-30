@@ -4,7 +4,6 @@ using FSDB.FileStorage;
 using FSDB.Indexing.Scopes;
 using FSDB.Indexing.State;
 using FSDB.Model;
-using FSDB.Retry;
 
 namespace FSDB.Indexing.Reconciliation;
 
@@ -12,7 +11,7 @@ public class FileReconciliationExecutor<TKey, TRecord, TProjection>
     where TKey : notnull
     where TRecord : class, IRecord<TKey>
 {
-    public RetryDecision Execute(
+    public FileReconciliationExecutionResult Execute(
         FileReconciliationDecision decision,
         string fileName,
         FileFingerprint fingerprint,
@@ -27,19 +26,19 @@ public class FileReconciliationExecutor<TKey, TRecord, TProjection>
                 result = indexedRecordScope!.DeleteFile(fileName);
                 return result != IndexOperationResult.Applied
                     ? throw new InvalidOperationException("Delete operation did not apply successfully.")
-                    : RetryDecision.Complete;
+                    : FileReconciliationExecutionResult.Applied;
 
             case FileReconciliationDecision.UpsertRecord:
                 result = fileRecordScope!.Upsert(fileName, fingerprint, readResult.Value.Record);
                 return result switch
                 {
-                    IndexOperationResult.Applied => RetryDecision.Complete,
+                    IndexOperationResult.Applied => FileReconciliationExecutionResult.Applied,
                     IndexOperationResult.NoChanges =>
                         throw new InvalidOperationException("Upsert operation did not apply successfully."),
                     IndexOperationResult.BlockedByAnotherId =>
                         indexedRecordScope != null
                             ? throw new InvalidOperationException("Upsert operation did not apply successfully.")
-                            : RetryDecision.RetryWithMinBackoff,
+                            : FileReconciliationExecutionResult.IdLockMismatch,
                     _ => throw new ArgumentOutOfRangeException(nameof(result), result, null)
                 };
 
@@ -47,7 +46,7 @@ public class FileReconciliationExecutor<TKey, TRecord, TProjection>
                 result = indexedRecordScope!.Upsert(fileName, fingerprint, readResult.Error!.ToErrorInfo());
                 return result != IndexOperationResult.Applied
                     ? throw new InvalidOperationException("Error upsert operation did not apply successfully.")
-                    : RetryDecision.Complete;
+                    : FileReconciliationExecutionResult.Applied;
 
             case FileReconciliationDecision.DeleteThenUpsertRecord:
                 result = indexedRecordScope!.DeleteFile(fileName);
@@ -59,10 +58,10 @@ public class FileReconciliationExecutor<TKey, TRecord, TProjection>
                 result = fileRecordScope!.Upsert(fileName, fingerprint, readResult.Value.Record);
                 return result switch
                 {
-                    IndexOperationResult.Applied => RetryDecision.Complete,
+                    IndexOperationResult.Applied => FileReconciliationExecutionResult.Applied,
                     IndexOperationResult.NoChanges =>
                         throw new InvalidOperationException("Upsert operation did not apply successfully."),
-                    IndexOperationResult.BlockedByAnotherId => RetryDecision.RetryWithMinBackoff,
+                    IndexOperationResult.BlockedByAnotherId => FileReconciliationExecutionResult.IdLockMismatch,
                     _ => throw new ArgumentOutOfRangeException(nameof(result), result, null)
                 };
 

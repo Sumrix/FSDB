@@ -23,6 +23,7 @@ public class FileReconciler<TKey, TRecord, TProjection>(
 {
     private readonly FileReconciliationDecisionMaker<TKey, TRecord, TProjection> _decisionMaker = new(context.KeyEqualityComparer);
     private readonly FileReconciliationExecutor<TKey, TRecord, TProjection> _executor = new();
+    private readonly FileReconciliationRetryDecisionMaker _retryDecisionMaker = new();
 
     public async Task<RetryDecision> ReconcileAsync(string path, CancellationToken ct)
     {
@@ -31,9 +32,7 @@ public class FileReconciler<TKey, TRecord, TProjection>(
         var firstPass = await DecideAsync(path, sharedIndexScope, null, ct);
         if (firstPass.Decision == FileReconciliationDecision.Skip)
         {
-            return firstPass.ReadResult.Error?.Persistence == FileErrorPersistence.Transient
-                ? RetryDecision.RetryWithBackoff
-                : RetryDecision.Complete;
+            return _retryDecisionMaker.MakeDecision(firstPass.ReadResult.Error, idLockMismatch: false);
         }
 
         var (firstPassIds, indexId, fileId) = GetRequiredIds(firstPass.IndexedState, firstPass.ReadResult);
@@ -67,28 +66,30 @@ public class FileReconciler<TKey, TRecord, TProjection>(
     {
         if (pass.Decision == FileReconciliationDecision.Skip)
         {
-            return pass.ReadResult.Error?.Persistence == FileErrorPersistence.Transient
-                ? RetryDecision.RetryWithBackoff
-                : RetryDecision.Complete;
+            return _retryDecisionMaker.MakeDecision(pass.ReadResult.Error, idLockMismatch: false);
         }
 
         var (requiredIds, indexId, fileId) = GetRequiredIds(pass.IndexedState, pass.ReadResult);
         if (!heldIds.IsSupersetOf(requiredIds))
         {
-            return RetryDecision.RetryWithMinBackoff;
+            return _retryDecisionMaker.MakeDecision(pass.ReadResult.Error, idLockMismatch: true);
         }
 
         var indexScope = GetScope(firstScope, secondScope, indexId);
         var fileScope = GetScope(firstScope, secondScope, fileId);
 
         var fileName = Path.GetFileName(path);
-        return _executor.Execute(
+        var executionResult = _executor.Execute(
             pass.Decision,
             fileName,
             pass.Fingerprint,
             pass.ReadResult,
             indexScope,
             fileScope);
+
+        return _retryDecisionMaker.MakeDecision(
+            pass.ReadResult.Error,
+            executionResult == FileReconciliationExecutionResult.IdLockMismatch);
     }
 
     private async Task<DecisionPass> DecideAsync(
@@ -112,7 +113,7 @@ public class FileReconciler<TKey, TRecord, TProjection>(
         }
         else
         {
-            return new(decision, fingerprint, default, indexedState);
+            return new(decision, fingerprint, readCache ?? default, indexedState);
         }
     }
 
