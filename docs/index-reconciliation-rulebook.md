@@ -6,27 +6,17 @@ This document describes the decision process for reconciling one file with the i
 
 ### The General Model
 
-In FSDB, files on disk are treated as the source of truth. A user or another process may create, edit, rename, or delete a file directly on disk without going through the library. The in-memory index is only a lagging representation of the observed file state.
+Files on disk are the source of truth; the index is a lagging, rebuildable representation of their observed state. A user or another process may create, edit, rename, or delete a file directly on disk without going through the library.
 
 ```text
 files on disk -> reconciliation algorithm -> in-memory index
 ```
 
-The reconciliation algorithm observes one path and performs two tasks. It reconciles the file with its indexed state, making the index reflect that observation. It also updates the current file to the current schema when its physical format is outdated.
+The reconciliation algorithm observes one path and performs two tasks: it reconciles the file with its indexed state (Chapters 1-3), and it keeps the file's on-disk schema up to date (Chapter 4).
 
 ### The Index
 
-The index contains every disk file whose id is known. A file whose id cannot be observed cannot be related to a record and is therefore not represented in the index.
-
-The indexed file state can be viewed as:
-
-```text
-FileIndexState(RecordId, RecordProjection, FileFingerprint, SchemaVersion, FileError?)
-```
-
-When the file is read successfully, `UpsertRecord` refreshes the projection, fingerprint, and physical schema version and clears the error, setting the indexed file to record state. When the file is already related to an id but can no longer be read or decoded, `UpsertError` preserves the previous projection and last successfully observed schema version, updates the observed fingerprint, and sets the error, setting the indexed file to error state. A file that has never been read successfully has no known id and is not added to the index.
-
-The index groups all paths with the same id into one `RecordIndexState`. The logical database still exposes one current record for that id.
+What the index stores (`FileIndexState`, `RecordIndexState`, and `CurrentFileName`) and how fingerprint and schema version are defined is described in [Index Data Model](./index-data-model.md). This chapter and the ones that follow only cover how reconciliation decides to change that state.
 
 ### The Reconciliation Algorithm
 
@@ -46,9 +36,7 @@ The algorithm collects observations through three operations:
 | `GetState` | `{PresentState=1, Fingerprint, SchemaVersion, Id, CurrentFileName, Error?}` \| `{PresentState=0}` | Reads the indexed state currently associated with the path. |
 | `ReadFile` | `{PresentFile=1, Fingerprint, SchemaVersion, Id, Record}` \| `{PresentFile=1, Fingerprint, Error}` \| `{PresentFile=0, Fingerprint}` | Reads and decodes the file, producing its complete observed state. |
 
-A fingerprint is a cheap file metadata snapshot used to decide whether the file may have changed. In FSDB, the fingerprint is based on the file size and the last write time. `GetFingerprint` does not read file contents, so it is expected to be much faster than `ReadFile`.
-
-FSDB uses this fingerprint as its file change signal. If the target file system or runtime environment cannot reliably expose file size and last-write-time changes for the way files are edited, FSDB cannot reliably detect unchanged files and is not a good fit for that environment.
+Fingerprint is defined in [Index Data Model](./index-data-model.md#fingerprint). `GetFingerprint` does not read file contents, so it is expected to be much faster than `ReadFile`.
 
 Each result is an observation made at a particular moment. The algorithm must assume that both the file system and the index may change between observations.
 
@@ -109,6 +97,8 @@ The most important hot path is an existing readable indexed file whose fingerpri
 The two trees are different because they operate on different available data. Before `ReadFile`, the file id, file error, and complete post-read fingerprint are not available. After `ReadFile`, the algorithm can compare the complete observed file state with the index.
 
 ### The Lock Boundary
+
+*This section derives the two-pass locking shape in prose and sketch pseudocode. [Chapter 5](#chapter-5-algorithm-implementation) gives the exact functions this sketch previews.*
 
 In a concurrent environment, every index mutation and file format update must happen under id locks that cover the affected records. Both operations must be based on observations confirmed while those records are locked. Otherwise, one reconciliation worker could act on an older file state and overwrite a newer index or file state observed by another worker.
 
@@ -334,7 +324,7 @@ Available = {EF}
 | EF | Disables | Available | Decision | Reason |
 | --- | --- | --- | --- | --- |
 | 0 | `{}` | `{}` | `UpsertRecord` | The file is readable and absent from the index: add it. |
-| 1 | `{}` | `{}` | `Skip` | The file id is unknown, so the file cannot be indexed. |
+| 1 | `{}` | `{}` | `Skip` | The file id is unknown, so no `RecordIndexState`, id lock, or `id <-> path` relation can be established. Keep the path as disk state only; a later successful read can add it to the index. |
 
 #### Table 2.4. Content Kind
 
@@ -515,19 +505,11 @@ The id lock mismatch branch comes first because it prevented the current reconci
 
 ## Chapter 4. File Format Update
 
-`SchemaVersion` is the version number of the file schema. The file schema defines how data is represented in a file, for example:
-UserV1(int Id, string FullName, SchemaVersion = 1);
-UserV2(string Id, string FirstName, string LastName, SchemaVersion = 2);
+This chapter uses `SchemaVersion`, `CurrentSchemaVersion`, `CurrentFileName`, and `Fingerprint` as defined in [Index Data Model](./index-data-model.md). `ReadFile` converts a record to `CurrentSchemaVersion` and returns it alongside the file's original on-disk `SchemaVersion`; this conversion happens in memory and does not itself change the file on disk. Updating the file requires writing the record back to disk and then writing the resulting new fingerprint to the index.
 
-`CurrentSchemaVersion` is the current schema version used by the application. Supported older versions must be updated to the current version. The indexed SchemaVersion of each file makes it possible to determine which file requires an update without reading the file itself.
+The file update is part of full reconciliation: it uses an already obtained `ReadResult`, runs under the same id locks, and changes the observed file state, which must then be reflected in the index. A user operation that reads a file on its own does not trigger this update — it may return the converted record without waiting for an additional disk write. The update happens later, in a background reconciliation pass.
 
-`CurrentFileName` is the file name associated with a database record. Multiple files may have the same id, but only the file with max(LastWriteTimeUtc) and min(fileName) is associated with the record. All other files are dormant and must not be updated, because an update could make a different file the `CurrentFileName`.
-
-`ReadFile` automatically converts a record to the current model. It returns the converted record together with the original file schema version. This conversion makes the record usable by application code but does not itself change the file on disk. Updating the file requires writing the record back to disk and then writing the resulting new fingerprint to the index.
-
-The file update is part of full reconciliation because it uses an already obtained `ReadResult`, runs under the same id locks, and changes the observed file state, which must then be reflected in the index. Partial reconciliation invoked by a user operation after reading a file does not update the file: the user operation may return the converted record without waiting for an additional disk write. A later background full reconciliation performs the update.
-
-`FileUpdateIntent` is determined alongside `IndexDecision` during the Pre-Read and Post-Read Decisions. The final `FileUpdateDecision` is made after the `IndexDecision` from [Chapter 2](#chapter-2-decision-tables) has been applied to the index. This ordering allows the index to first establish the current path-to-id relation and recalculate `CurrentFileName`. Only then can reconciliation reliably determine whether the processed file is current in the logical data model.
+`FileUpdateIntent` is determined alongside `IndexDecision` during the Pre-Read and Post-Read Decisions. The final `FileUpdateDecision` is made after the `IndexDecision` from [Chapter 2](#chapter-2-decision-tables) has been applied to the index. This ordering lets the index first establish the up-to-date path-to-id relation and recalculate `CurrentFileName`. Only then can reconciliation reliably determine whether the processed file is the one selected by `CurrentFileName`.
 
 ```text
 make Pre-Read IndexDecision and FileUpdateIntent
@@ -588,7 +570,7 @@ The file update decision tables used by the Pre-Read and Post-Read Decisions ret
 | `ReadFile` | Read the file to obtain the data required to decide whether its format should be updated. |
 | `UpdateIfCurrentFile` | After executing `IndexDecision`, update the file format if this is the record's current file. |
 
-After executing `IndexDecision`, `UpdateIfCurrentFile` is resolved into the final `FileUpdateDecision` described in [Analyze Data](#analyze-data).
+After executing `IndexDecision`, `UpdateIfCurrentFile` is resolved into the final `FileUpdateDecision` described in [File Update Decision](#file-update-decision).
 
 ### Pre-Read File Update Intent
 
