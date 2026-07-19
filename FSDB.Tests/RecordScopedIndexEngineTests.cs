@@ -81,7 +81,7 @@ public class RecordScopedIndexEngineTests : IDisposable
         await using var engine = await CreateNoProjectionEngineAsync();
         var fingerprint = new FileFingerprint(DateTime.UnixEpoch, 10, true);
 
-        engine.Upsert("id-1", "file-a.json", fingerprint, new TestRecord("id-1", 1, "value")).Should().Be(IndexOperationResult.Applied);
+        engine.Upsert("id-1", "file-a.json", fingerprint, 1, new TestRecord("id-1", 1, "value")).Should().Be(IndexOperationResult.Applied);
 
         var expected = new IndexSnapshot(
             [new("id-1", "id-1", "file-a.json", [new("file-a.json", "id-1", FileIndexStatus.Committed, fingerprint)])],
@@ -98,11 +98,11 @@ public class RecordScopedIndexEngineTests : IDisposable
         var t1 = new DateTime(2025, 01, 01, 0, 0, 0, DateTimeKind.Utc);
         var t2 = new DateTime(2025, 01, 01, 0, 0, 1, DateTimeKind.Utc);
 
-        engine.Upsert("id-1", "b.json", new(t1, 1, true), new TestRecord("id-1", 1, "value")).Should().Be(IndexOperationResult.Applied);
-        engine.Upsert("id-1", "c.json", new(t2, 1, true), new TestRecord("id-1", 1, "value")).Should().Be(IndexOperationResult.Applied);
+        engine.Upsert("id-1", "b.json", new(t1, 1, true), 1, new TestRecord("id-1", 1, "value")).Should().Be(IndexOperationResult.Applied);
+        engine.Upsert("id-1", "c.json", new(t2, 1, true), 1, new TestRecord("id-1", 1, "value")).Should().Be(IndexOperationResult.Applied);
         engine.Records["id-1"].CurrentFileName.Should().Be("c.json");
 
-        engine.Upsert("id-1", "a.json", new(t2, 1, true), new TestRecord("id-1", 1, "value")).Should().Be(IndexOperationResult.Applied);
+        engine.Upsert("id-1", "a.json", new(t2, 1, true), 1, new TestRecord("id-1", 1, "value")).Should().Be(IndexOperationResult.Applied);
         engine.Records["id-1"].CurrentFileName.Should().Be("a.json");
     }
 
@@ -118,7 +118,7 @@ public class RecordScopedIndexEngineTests : IDisposable
             FileErrorPersistence.Persistent,
             new InvalidDataException("broken"));
 
-        engine.Upsert("id-1", "committed.json", older, new TestRecord("id-1", 1, "value")).Should().Be(IndexOperationResult.Applied);
+        engine.Upsert("id-1", "committed.json", older, 1, new TestRecord("id-1", 1, "value")).Should().Be(IndexOperationResult.Applied);
         engine.Upsert("id-1", "invalid.json", newer, errorInfo).Should().Be(IndexOperationResult.Applied);
 
         engine.Records["id-1"].CurrentFileName.Should().Be("committed.json");
@@ -133,8 +133,8 @@ public class RecordScopedIndexEngineTests : IDisposable
         await using var engine = await CreateNoProjectionEngineAsync();
         var fp = new FileFingerprint(DateTime.UnixEpoch, 1, true);
 
-        engine.Upsert("id-1", "shared.json", fp, new TestRecord("id-1", 1, "value")).Should().Be(IndexOperationResult.Applied);
-        var result = engine.Upsert("id-2", "shared.json", fp, new TestRecord("id-2", 1, "value"));
+        engine.Upsert("id-1", "shared.json", fp, 1, new TestRecord("id-1", 1, "value")).Should().Be(IndexOperationResult.Applied);
+        var result = engine.Upsert("id-2", "shared.json", fp, 1, new TestRecord("id-2", 1, "value"));
         result.Should().Be(IndexOperationResult.BlockedByAnotherId);
         engine.Records.ContainsKey("id-2").Should().BeFalse();
     }
@@ -145,7 +145,7 @@ public class RecordScopedIndexEngineTests : IDisposable
         await using var engine = await CreateNoProjectionEngineAsync();
         var fp = new FileFingerprint(DateTime.UnixEpoch, 1, true);
 
-        engine.Upsert("id-1", "shared.json", fp, new TestRecord("id-1", 1, "value")).Should().Be(IndexOperationResult.Applied);
+        engine.Upsert("id-1", "shared.json", fp, 1, new TestRecord("id-1", 1, "value")).Should().Be(IndexOperationResult.Applied);
 
         engine.DeleteFile("id-2", "shared.json").Should().Be(IndexOperationResult.BlockedByAnotherId);
         engine.Files["shared.json"].Record.Id.Should().Be("id-1");
@@ -156,8 +156,8 @@ public class RecordScopedIndexEngineTests : IDisposable
     public async Task Delete_RemovesRecordAndAllItsFiles()
     {
         await using var engine = await CreateNoProjectionEngineAsync();
-        engine.Upsert("id-1", "a.json", new(DateTime.UnixEpoch, 1, true), new TestRecord("id-1", 1, "value"));
-        engine.Upsert("id-1", "b.json", new(DateTime.UnixEpoch, 2, true), new TestRecord("id-1", 1, "value"));
+        engine.Upsert("id-1", "a.json", new(DateTime.UnixEpoch, 1, true), 1, new TestRecord("id-1", 1, "value"));
+        engine.Upsert("id-1", "b.json", new(DateTime.UnixEpoch, 2, true), 1, new TestRecord("id-1", 1, "value"));
         engine.Delete("id-1");
         ShouldBeEmpty(engine);
     }
@@ -171,6 +171,7 @@ public class RecordScopedIndexEngineTests : IDisposable
         var fp = new FileFingerprint(new DateTime(2025, 01, 01, 0, 0, 1, DateTimeKind.Utc), 123, true);
         engine.CommitReservedFileName("id-1", fileName, fp, new("id-1", 1, "value")).Should().BeTrue();
         engine.Records["id-1"].CurrentFileName.Should().Be(fileName);
+        engine.Files[fileName].SchemaVersion.Should().Be(1);
     }
 
     [Fact]
@@ -183,10 +184,25 @@ public class RecordScopedIndexEngineTests : IDisposable
             autoSaveEnabled: false);
 
         var fingerprint = new FileFingerprint(DateTime.UnixEpoch, 10, true);
-        engine.Upsert("id-1", "file-a.json", fingerprint, new TestRecord("id-1", 1, "first")).Should().Be(IndexOperationResult.Applied);
-        engine.Upsert("id-1", "file-a.json", fingerprint, new TestRecord("id-1", 1, "second")).Should().Be(IndexOperationResult.NoChanges);
+        engine.Upsert("id-1", "file-a.json", fingerprint, 1, new TestRecord("id-1", 1, "first")).Should().Be(IndexOperationResult.Applied);
+        engine.Upsert("id-1", "file-a.json", fingerprint, 1, new TestRecord("id-1", 1, "second")).Should().Be(IndexOperationResult.NoChanges);
 
         engine.Files["file-a.json"].Projection.Should().Be("first");
+    }
+
+    [Fact]
+    public async Task Upsert_SuccessfulUnversionedRead_ClearsIndexedSchemaVersion()
+    {
+        await using var engine = await CreateNoProjectionEngineAsync();
+        var fingerprint = new FileFingerprint(DateTime.UnixEpoch, 10, true);
+        var record = new TestRecord("id-1", 1, "value");
+        engine.Upsert("id-1", "file-a.json", fingerprint, 1, record)
+            .Should().Be(IndexOperationResult.Applied);
+
+        engine.Upsert("id-1", "file-a.json", fingerprint, null, record)
+            .Should().Be(IndexOperationResult.Applied);
+
+        engine.Files["file-a.json"].SchemaVersion.Should().BeNull();
     }
 
     [Fact]
@@ -204,7 +220,7 @@ public class RecordScopedIndexEngineTests : IDisposable
             FileErrorPersistence.Persistent,
             new IOException("locked"));
 
-        engine.Upsert("id-1", "file-a.json", fingerprint, new TestRecord("id-1", 1, "first")).Should().Be(IndexOperationResult.Applied);
+        engine.Upsert("id-1", "file-a.json", fingerprint, 1, new TestRecord("id-1", 1, "first")).Should().Be(IndexOperationResult.Applied);
         engine.Upsert("id-1", "file-a.json", fingerprint, errorInfo).Should().Be(IndexOperationResult.Applied);
 
         engine.Files["file-a.json"].Projection.Should().Be("first"); 
@@ -213,6 +229,7 @@ public class RecordScopedIndexEngineTests : IDisposable
 
         currentFile.Projection.Should().Be("first");
         currentFile.ErrorInfo.Should().Be(errorInfo);
+        currentFile.SchemaVersion.Should().Be(1);
     }
 
     [Fact]
@@ -225,7 +242,8 @@ public class RecordScopedIndexEngineTests : IDisposable
                 {
                     ["user.json"] = new(
                         JsonSerializer.SerializeToUtf8Bytes("Harry Potter", TestsJsonContext.Default.String),
-                        new FileFingerprint(DateTime.UnixEpoch, 1, true))
+                        new FileFingerprint(DateTime.UnixEpoch, 1, true),
+                        SchemaVersion: 1)
                 })
         ]);
 
@@ -240,6 +258,7 @@ public class RecordScopedIndexEngineTests : IDisposable
         engine.Files["user.json"].Projection.Should().Be("Harry Potter");
         engine.Files["user.json"].Status.Should().Be(FileIndexStatus.Committed);
         engine.Files["user.json"].ErrorInfo.Should().BeNull();
+        engine.Files["user.json"].SchemaVersion.Should().Be(1);
     }
 
     [Fact]
@@ -260,7 +279,8 @@ public class RecordScopedIndexEngineTests : IDisposable
             Status = FileIndexStatus.Committed,
             ErrorInfo = errorInfo,
             Projection = default!,
-            Fingerprint = fingerprint
+            Fingerprint = fingerprint,
+            SchemaVersion = 1
         };
         state.Records["id-1"] = record;
         state.Files["user.json"] = file;
@@ -275,6 +295,7 @@ public class RecordScopedIndexEngineTests : IDisposable
 
         engine.Files["user.json"].Status.Should().Be(FileIndexStatus.Committed);
         engine.Files["user.json"].ErrorInfo.Should().Be(errorInfo);
+        engine.Files["user.json"].SchemaVersion.Should().Be(1);
         engine.Records["id-1"].CurrentFileName.Should().Be("user.json");
         engine.Records["id-1"].GetCurrentFileState().ErrorInfo.Should().Be(errorInfo);
     }

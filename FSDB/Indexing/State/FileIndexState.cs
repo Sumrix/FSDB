@@ -17,5 +17,7 @@ public class FileIndexState<TKey, TProjection> : IReadOnlyFileIndexState<TKey, T
 
     public required FileFingerprint Fingerprint { get; set; }
 
+    public int? SchemaVersion { get; set; }
+
     IReadOnlyRecordIndexState<TKey, TProjection> IReadOnlyFileIndexState<TKey, TProjection>.Record => Record;
 }

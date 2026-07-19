@@ -104,7 +104,11 @@ internal class FileOperationProcessor<TKey, TRecord, TProjection>(
             return new ReadResult<TRecord>(null, null, fileName);
         }
 
-        var upsertResult = recordScope.Upsert(fileName, readFingerprint, record);
+        var upsertResult = recordScope.Upsert(
+            fileName,
+            readFingerprint,
+            readResult.Value.SourceSchemaVersion,
+            record);
         if (upsertResult == IndexOperationResult.BlockedByAnotherId)
         {
             _logger.LogDebug(
@@ -147,7 +151,11 @@ internal class FileOperationProcessor<TKey, TRecord, TProjection>(
             return new OperationResult(writeResult.Error, fileName);
         }
 
-        var upsertResult = recordScope.Upsert(fileName, writeResult.Fingerprint!.Value, record);
+        var upsertResult = recordScope.Upsert(
+            fileName,
+            writeResult.Fingerprint!.Value,
+            context.RecordCodec.CurrentSchemaVersion,
+            record);
         if (upsertResult == IndexOperationResult.BlockedByAnotherId)
         {
             // Impossible scenario since the file is locked

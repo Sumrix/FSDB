@@ -178,6 +178,8 @@ public class TableDefinitionBuilderTests
 
     private sealed class FakeRecordCodec : IRecordCodec<string, TestRecord>
     {
+        public int? CurrentSchemaVersion => null;
+
         public Task<RecordDecodeResult<TestRecord>> DecodeAsync(Stream stream, CancellationToken ct)
         {
             throw new System.NotSupportedException();
@@ -227,7 +229,12 @@ public class TableDefinitionBuilderTests
         public AsyncReaderWriterLock Barrier { get; } = new();
         public StripedAsyncLock<TKey> IdLocks { get; } = new(1, EqualityComparer<TKey>.Default);
 
-        public IndexOperationResult Upsert(TKey id, string fileName, FileFingerprint fingerprint, TRecord record)
+        public IndexOperationResult Upsert(
+            TKey id,
+            string fileName,
+            FileFingerprint fingerprint,
+            int? schemaVersion,
+            TRecord record)
         {
             throw new NotSupportedException();
         }

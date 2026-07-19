@@ -108,7 +108,8 @@ public class JsonTableIndexPersistence<TKey, TProjection> : ITableIndexPersisten
                             : null,
                         kv.Value.Fingerprint,
                         kv.Value.Status,
-                        kv.Value.ErrorInfo))
+                        kv.Value.ErrorInfo,
+                        kv.Value.SchemaVersion))
             where files.Count != 0
             let keyBytes = JsonSerializer.SerializeToUtf8Bytes(record.Id, _keyTypeInfo)
             select new RecordDto(keyBytes, files)
@@ -159,7 +160,8 @@ public class JsonTableIndexPersistence<TKey, TProjection> : ITableIndexPersisten
                     Status = fileDto.Status,
                     ErrorInfo = fileDto.ErrorInfo,
                     Projection = projection,
-                    Fingerprint = fileDto.Fingerprint
+                    Fingerprint = fileDto.Fingerprint,
+                    SchemaVersion = fileDto.SchemaVersion
                 };
 
                 state.Files[fileName] = fileState;

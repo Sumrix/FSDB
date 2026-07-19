@@ -104,20 +104,26 @@ public class RecordScopedIndexEngine<TKey, TRecord, TProjection> : IRecordScoped
         await _autoSaver.DisposeAsync();
     }
     
-    public IndexOperationResult Upsert(TKey id, string fileName, FileFingerprint fingerprint, TRecord record)
+    public IndexOperationResult Upsert(
+        TKey id,
+        string fileName,
+        FileFingerprint fingerprint,
+        int? schemaVersion,
+        TRecord record)
     {
-        return Upsert(id, fileName, fingerprint, record, null);
+        return Upsert(id, fileName, fingerprint, schemaVersion, record, null);
     }
 
     public IndexOperationResult Upsert(TKey id, string fileName, FileFingerprint fingerprint, FileErrorInfo errorInfo)
     {
-        return Upsert(id, fileName, fingerprint, null, errorInfo);
+        return Upsert(id, fileName, fingerprint, null, null, errorInfo);
     }
 
     private IndexOperationResult Upsert(
         TKey id,
         string fileName,
         FileFingerprint fingerprint,
+        int? schemaVersion,
         TRecord? record,
         FileErrorInfo? errorInfo)
     {
@@ -126,10 +132,10 @@ public class RecordScopedIndexEngine<TKey, TRecord, TProjection> : IRecordScoped
         var recordState = GetOrCreateRecord(id, out var recordIsNew);
         if (!recordIsNew && recordState.Files.TryGetValue(fileName, out var ownedFile))
         {
-            return UpdateExistingFile(id, fileName, fingerprint, record, errorInfo, ownedFile);
+            return UpdateExistingFile(id, fileName, fingerprint, schemaVersion, record, errorInfo, ownedFile);
         }
 
-        var fileState = CreateFileState(recordState, fingerprint, record, errorInfo);
+        var fileState = CreateFileState(recordState, fingerprint, schemaVersion, record, errorInfo);
         fileState = _indexState.Files.GetOrAdd(fileName, fileState);
         if (ReferenceEquals(fileState.Record, recordState))
         {
@@ -169,7 +175,8 @@ public class RecordScopedIndexEngine<TKey, TRecord, TProjection> : IRecordScoped
             Status = FileIndexStatus.Reserved,
             ErrorInfo = null,
             Projection = default,
-            Fingerprint = default
+            Fingerprint = default,
+            SchemaVersion = null
         };
 
         if (!_indexState.Files.TryAdd(fileName, fileState))
@@ -202,6 +209,8 @@ public class RecordScopedIndexEngine<TKey, TRecord, TProjection> : IRecordScoped
             file.ErrorInfo = null;
             file.Projection = projection;
             file.Fingerprint = fingerprint;
+            // A successfully written reserved file has the codec's current physical schema version.
+            file.SchemaVersion = _context.RecordCodec.CurrentSchemaVersion;
             file.Record.RecalculateCurrent();
             _indexState.Records[id] = file.Record;
 
@@ -304,6 +313,7 @@ public class RecordScopedIndexEngine<TKey, TRecord, TProjection> : IRecordScoped
     private FileIndexState<TKey, TProjection> CreateFileState(
         RecordIndexState<TKey, TProjection> recordState,
         FileFingerprint fingerprint,
+        int? schemaVersion,
         TRecord? record,
         FileErrorInfo? errorInfo)
     {
@@ -313,7 +323,8 @@ public class RecordScopedIndexEngine<TKey, TRecord, TProjection> : IRecordScoped
                 Record = recordState,
                 Status = FileIndexStatus.Committed,
                 Projection = _context.CreateProjection(record),
-                Fingerprint = fingerprint
+                Fingerprint = fingerprint,
+                SchemaVersion = schemaVersion
             }
             : new FileIndexState<TKey, TProjection>
             {
@@ -321,7 +332,8 @@ public class RecordScopedIndexEngine<TKey, TRecord, TProjection> : IRecordScoped
                 Status = FileIndexStatus.Committed,
                 ErrorInfo = errorInfo,
                 Projection = default,
-                Fingerprint = fingerprint
+                Fingerprint = fingerprint,
+                SchemaVersion = null
             };
     }
 
@@ -329,6 +341,7 @@ public class RecordScopedIndexEngine<TKey, TRecord, TProjection> : IRecordScoped
         TKey id,
         string fileName,
         FileFingerprint fingerprint,
+        int? schemaVersion,
         TRecord? record,
         FileErrorInfo? errorInfo,
         FileIndexState<TKey, TProjection> fileState)
@@ -346,6 +359,12 @@ public class RecordScopedIndexEngine<TKey, TRecord, TProjection> : IRecordScoped
             }
 
             fileState.Fingerprint = fingerprint;
+            updated = true;
+        }
+
+        if (record != null && fileState.SchemaVersion != schemaVersion)
+        {
+            fileState.SchemaVersion = schemaVersion;
             updated = true;
         }
 

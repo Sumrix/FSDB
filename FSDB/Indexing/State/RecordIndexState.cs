@@ -90,7 +90,7 @@ public class RecordIndexState<TKey, TProjection> : IReadOnlyRecordIndexState<TKe
         DateTime? LastWriteUtc,
         string FileName);
 
-    public FileIndexState<TKey, TProjection> GetCurrentFileState()
+    public IReadOnlyFileIndexState<TKey, TProjection> GetCurrentFileState()
     {
         return Files[CurrentFileName];
     }

@@ -21,15 +21,16 @@ FileIndexState(RecordIndexState, Status, ErrorInfo?, Projection?, Fingerprint, S
 | `ErrorInfo?` | The last observed file error; absent for a reservation or successfully read file. |
 | `Projection?` | Decoded record data from the last successful read; absent while a file name is only reserved. |
 | `Fingerprint` | For `Committed`, the latest observed file metadata. For `Reserved`, the default value because no file has been observed yet. |
-| `SchemaVersion?` | On-disk schema version from the last successful read; absent for a reservation record. |
+| `SchemaVersion?` | On-disk schema version from the last successful read; absent when versioning is not used or while the file is only reserved. |
 
 The nullable fields are governed by these state invariants:
 
 | State | `ErrorInfo` | `Projection` | `SchemaVersion` |
 | --- | --- | --- | --- |
 | `Reserved` | absent | absent | absent |
-| `Committed`, successfully read | absent | present | present |
-| `Committed`, read error | present | keeps the last known-good value | keeps the last known-good value |
+| `Committed`, successfully read, versioned | absent | present | present |
+| `Committed`, successfully read, unversioned | absent | present | absent |
+| `Committed`, read error | present | keeps the last known-good value | keeps the last known-good value, including absence for an unversioned file |
 
 A path whose id has never been observed is not added to the index. `FileIndexState` represents a database file, not an arbitrary file-system path, and must belong to a `RecordIndexState` so that the index can maintain the `id <-> path` relation, apply the id-lock discipline, and perform winner selection. A file with no known id cannot participate in any of those operations. It remains part of the disk state and an input to reconciliation; after a later successful read reveals its id, `UpsertRecord` adds it to the index.
 
@@ -66,7 +67,7 @@ FSDB relies on the file system and runtime reliably exposing size and `LastWrite
 
 ## SchemaVersion and CurrentSchemaVersion
 
-`SchemaVersion` is the version number of a file's on-disk schema. The schema defines how data is represented in the file, for example:
+Schema versioning is optional for a table. When versioning is enabled, `SchemaVersion` is the version number of a file's on-disk schema. The schema defines how data is represented in the file, for example:
 
 ```text
 UserV1(int Id, string FullName, SchemaVersion = 1)
@@ -74,5 +75,7 @@ UserV2(string Id, string FirstName, string LastName, SchemaVersion = 2)
 ```
 
 `CurrentSchemaVersion` is the schema version the application currently uses. Because `SchemaVersion` is indexed, the engine can find files that need a format upgrade without reading them.
+
+When versioning is not used, neither files nor decoded records have a schema version. `SchemaVersion` and `CurrentSchemaVersion` are both absent, and reconciliation does not run the file format update decisions.
 
 When reading and decoding succeeds, `ReadFile` returns a record converted to `CurrentSchemaVersion`, together with the file's original on-disk `SchemaVersion`. A missing, unavailable, or invalid file produces the corresponding non-record result instead. Conversion happens in memory only — it does not by itself change the file on disk.

@@ -23,7 +23,12 @@ public interface IRecordScopedIndexEngine<TKey, in TRecord, TProjection> : IAsyn
 
     StripedAsyncLock<TKey> IdLocks { get; }
 
-    IndexOperationResult Upsert(TKey id, string fileName, FileFingerprint fingerprint, TRecord record);
+    IndexOperationResult Upsert(
+        TKey id,
+        string fileName,
+        FileFingerprint fingerprint,
+        int? schemaVersion,
+        TRecord record);
 
     IndexOperationResult Upsert(
         TKey id,

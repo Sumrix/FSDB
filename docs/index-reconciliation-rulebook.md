@@ -33,8 +33,8 @@ The algorithm collects observations through three operations:
 | Operation | Result | Meaning |
 | --- | --- | --- |
 | `GetFingerprint` | `{PresentFile, Fingerprint}` | Observes whether the file exists and, when it exists, returns its current fingerprint. |
-| `GetState` | `{PresentState=1, Fingerprint, SchemaVersion, Id, CurrentFileName, Error?}` \| `{PresentState=0}` | Reads the indexed state currently associated with the path. |
-| `ReadFile` | `{PresentFile=1, Fingerprint, SchemaVersion, Id, Record}` \| `{PresentFile=1, Fingerprint, Error}` \| `{PresentFile=0, Fingerprint}` | Reads and decodes the file, producing its complete observed state. |
+| `GetState` | `{PresentState=1, Fingerprint, SchemaVersion?, Id, CurrentFileName, Error?}` \| `{PresentState=0}` | Reads the indexed state currently associated with the path. |
+| `ReadFile` | `{PresentFile=1, Fingerprint, SchemaVersion?, Id, Record}` \| `{PresentFile=1, Fingerprint, Error}` \| `{PresentFile=0, Fingerprint}` | Reads and decodes the file, producing its complete observed state. |
 
 Fingerprint is defined in [Index Data Model](./index-data-model.md#fingerprint). `GetFingerprint` does not read file contents, so it is expected to be much faster than `ReadFile`.
 
@@ -52,6 +52,7 @@ The algorithm compares the observed file and indexed state using these inputs:
 | State kind | Is the indexed state record-like or an error? |
 | Id relation | Do the observed and indexed ids match? |
 | Fingerprint relation | Do the observed and indexed fingerprints match? |
+| Schema relation | Do the observed and indexed schema versions match? |
 | Error relation | Do the observed and indexed errors match? |
 
 From the available inputs, the index reconciliation algorithm produces one of these decisions:
@@ -80,7 +81,7 @@ The file update algorithm produces one of these decisions:
 
 The index determines what records the database exposes to its users. A wrong decision can hide a valid record, retain a deleted record, attach a file to the wrong id, or replace useful state with an error. User data is the most important part of the database, so the decision process must explicitly cover every relevant situation.
 
-The direct approach would be one truth table with every combination of every input. With `N` independent binary inputs, that table has `2^N` rows and `N` input columns. For the seven modeled inputs in this rulebook, that starts with `2^7 = 128` rows. Such a table is difficult to review and mostly consists of duplicate or impossible situations. For example, the relation between file and indexed ids is unavailable when either side has no id.
+The direct approach would be one truth table with every combination of every input. With `N` independent binary inputs, that table has `2^N` rows and `N` input columns. For the eight modeled inputs in this rulebook, that starts with `2^8 = 256` rows. Such a table is difficult to review and mostly consists of duplicate or impossible situations. For example, the relation between file and indexed ids is unavailable when either side has no id.
 
 Instead, the rulebook uses a series of connected tables. Each table fixes some inputs, disables inputs that are no longer meaningful, and delegates the remaining cases to a smaller table. These tables form a decision tree. The tree is shorter than the full truth table while still making the complete reachable decision space reviewable.
 
@@ -179,12 +180,13 @@ Meanings:
 | `ES` | Error State | `0`, `1` | The indexed state is an error instead of record-like state. |
 | `RI` | Relation Id | `same`, `different` | Relation between observed id and indexed id. |
 | `RF` | Relation Fingerprint | `same`, `different` | Relation between observed fingerprint and indexed fingerprint. |
+| `RS` | Schema Relation | `same`, `different` | Relation between observed on-disk schema version and indexed schema version. |
 | `RE` | Relation Error | `same`, `different` | Relation between observed error and indexed error. |
 
 Sets:
 
 ```text
-U = {PF, PS, EF, ES, RI, RF, RE}
+U = {PF, PS, EF, ES, RI, RF, RS, RE}
 ```
 
 Notation:
@@ -207,9 +209,9 @@ Available = U - Fixed - Disabled - Disables
 
 | Values | Disables |
 | --- | --- |
-| `PF=0` | `{EF, RI, RF, RE}` |
-| `PS=0` | `{ES, RI, RF, RE}` |
-| `EF=1` | `{RI}` |
+| `PF=0` | `{EF, RI, RF, RS, RE}` |
+| `PS=0` | `{ES, RI, RF, RS, RE}` |
+| `EF=1` | `{RI, RS}` |
 | `EF=0` | `{RE}` |
 | `ES=0` | `{RE}` |
 
@@ -217,13 +219,13 @@ Available = U - Fixed - Disabled - Disables
 
 The executable reconciliation algorithm starts with the pre-read decision. It may decide early when the decision does not require file contents.
 
-Before `ReadFile`, the algorithm can only observe file presence and fingerprint through `GetFingerprint`, and indexed state through `GetState`. The observed file kind and observed file id are not available yet, so `EF` and `RI` are disabled. Because `RE` compares observed and indexed errors, it is unavailable without the observed file error.
+Before `ReadFile`, the algorithm can only observe file presence and fingerprint through `GetFingerprint`, and indexed state through `GetState`. The observed file kind, observed file id, and observed on-disk schema version are not available yet, so `EF`, `RI`, and `RS` are disabled. Because `RE` compares observed and indexed errors, it is unavailable without the observed file error.
 
 #### Table 1.1. Presence
 
 ```text
 Fixed = {}
-Disabled = {EF, RI, RE}
+Disabled = {EF, RI, RS, RE}
 Available = {PF, PS, ES, RF}
 ```
 
@@ -238,7 +240,7 @@ Available = {PF, PS, ES, RF}
 
 ```text
 Fixed = {PF=0, PS=1}
-Disabled = {EF, RI, RF, RE}
+Disabled = {EF, RI, RF, RS, RE}
 Available = {ES}
 ```
 
@@ -253,7 +255,7 @@ The file is absent on disk, so its indexed state must be deleted.
 
 ```text
 Fixed = {PF=1, PS=1}
-Disabled = {EF, RI, RE}
+Disabled = {EF, RI, RS, RE}
 Available = {ES, RF}
 ```
 
@@ -281,28 +283,28 @@ GetState       -> PS, ES, indexed state
 
 The post-read decision starts when the pre-read decision returns `ReadFile`. It reads the file, builds post-read inputs, and delegates to the complete reconciliation tables below.
 
-Because `ReadFile` produces a new `{PresentFile, Fingerprint}` observation, the post-read values of `PF` and `RF` are different observations from the values used in the pre-read decision.
+Because `ReadFile` produces a new `{PresentFile, Fingerprint, SchemaVersion?}` observation, the post-read values of `PF` and `RF` are different observations from the values used in the pre-read decision.
 
 #### Table 2.1. Presence
 
 ```text
 Fixed = {}
 Disabled = {}
-Available = {PF, PS, EF, ES, RI, RF, RE}
+Available = {PF, PS, EF, ES, RI, RF, RS, RE}
 ```
 
 | PF | PS | Disables | Available | Decision | Reason |
 | --- | --- | --- | --- | --- | --- |
-| 0 | 0 | `{EF, ES, RI, RF, RE}` | `{}` | `Skip` | The file and indexed state are absent: current. |
-| 0 | 1 | `{EF, RI, RF, RE}` | `{ES}` | [Table 2.2](#table-22-missing-file) | |
-| 1 | 0 | `{ES, RI, RF, RE}` | `{EF}` | [Table 2.3](#table-23-new-file) | |
-| 1 | 1 | `{}` | `{EF, ES, RI, RF, RE}` | [Table 2.4](#table-24-content-kind) | |
+| 0 | 0 | `{EF, ES, RI, RF, RS, RE}` | `{}` | `Skip` | The file and indexed state are absent: current. |
+| 0 | 1 | `{EF, RI, RF, RS, RE}` | `{ES}` | [Table 2.2](#table-22-missing-file) | |
+| 1 | 0 | `{ES, RI, RF, RS, RE}` | `{EF}` | [Table 2.3](#table-23-new-file) | |
+| 1 | 1 | `{}` | `{EF, ES, RI, RF, RS, RE}` | [Table 2.4](#table-24-content-kind) | |
 
 #### Table 2.2. Missing File
 
 ```text
 Fixed = {PF=0, PS=1}
-Disabled = {EF, RI, RF, RE}
+Disabled = {EF, RI, RF, RS, RE}
 Available = {ES}
 ```
 
@@ -317,7 +319,7 @@ The file is absent on disk, so its indexed state must be deleted.
 
 ```text
 Fixed = {PF=1, PS=0}
-Disabled = {ES, RI, RF, RE}
+Disabled = {ES, RI, RF, RS, RE}
 Available = {EF}
 ```
 
@@ -331,51 +333,61 @@ Available = {EF}
 ```text
 Fixed = {PF=1, PS=1}
 Disabled = {}
-Available = {EF, ES, RI, RF, RE}
+Available = {EF, ES, RI, RF, RS, RE}
 ```
 
 | EF | ES | Disables | Available | Decision | Reason |
 | --- | --- | --- | --- | --- | --- |
-| 0 | 0 | `{RE}` | `{RI, RF}` | [Table 2.5](#table-25-record-state-comparison) | |
-| 1 | 0 | `{RI, RE}` | `{RF}` | `UpsertError` | The indexed record state differs from the file: reconcile it as error state. |
-| 0 | 1 | `{RE}` | `{RI, RF}` | [Table 2.6](#table-26-record-recovery-from-error) | |
-| 1 | 1 | `{RI}` | `{RF, RE}` | [Table 2.7](#table-27-error-comparison) | |
+| 0 | 0 | `{RE}` | `{RI, RF, RS}` | [Table 2.5](#table-25-record-state-comparison) | |
+| 1 | 0 | `{RI, RS, RE}` | `{RF}` | `UpsertError` | The indexed record state differs from the file: reconcile it as error state. |
+| 0 | 1 | `{RE}` | `{RI, RF, RS}` | [Table 2.6](#table-26-record-recovery-from-error) | |
+| 1 | 1 | `{RI, RS}` | `{RF, RE}` | [Table 2.7](#table-27-error-comparison) | |
 
 #### Table 2.5. Record State Comparison
 
 ```text
 Fixed = {PF=1, PS=1, EF=0, ES=0}
 Disabled = {RE}
-Available = {RI, RF}
+Available = {RI, RF, RS}
 ```
 
-| RI | RF | Disables | Available | Decision | Reason |
-| --- | --- | --- | --- | --- | --- |
-| same | same | `{}` | `{}` | `Skip` | The indexed record matches the file: current. |
-| same | different | `{}` | `{}` | `UpsertRecord` | The indexed record differs from the file: reconcile it. |
-| different | same | `{}` | `{}` | `Delete`, then `UpsertRecord` | The indexed id differs from the file: move the relation. |
-| different | different | `{}` | `{}` | `Delete`, then `UpsertRecord` | The indexed id and record differ from the file: move the relation. |
+| RI | RF | RS | Disables | Available | Decision | Reason |
+| --- | --- | --- | --- | --- | --- | --- |
+| same | same | same | `{}` | `{}` | `Skip` | The indexed record matches the file: current. |
+| same | same | different | `{}` | `{}` | `UpsertRecord` | The indexed schema version must be actual. |
+| same | different | same | `{}` | `{}` | `UpsertRecord` | The indexed record must be actual. |
+| same | different | different | `{}` | `{}` | `UpsertRecord` | The indexed state must be actual. |
+| different | same | same | `{}` | `{}` | `Delete`, then `UpsertRecord` | The indexed id must be actual. |
+| different | same | different | `{}` | `{}` | `Delete`, then `UpsertRecord` | The indexed id must be actual. |
+| different | different | same | `{}` | `{}` | `Delete`, then `UpsertRecord` | The indexed id must be actual. |
+| different | different | different | `{}` | `{}` | `Delete`, then `UpsertRecord` | The indexed id must be actual. |
 
 #### Table 2.6. Record Recovery From Error
 
 ```text
 Fixed = {PF=1, PS=1, EF=0, ES=1}
 Disabled = {RE}
-Available = {RI, RF}
+Available = {RI, RF, RS}
 ```
 
-| RI | RF | Disables | Available | Decision | Reason |
+| RI | RF | RS | Disables | Available | Decision |
 | --- | --- | --- | --- | --- | --- |
-| same | same | `{}` | `{}` | `UpsertRecord` | The indexed state is error but the file is readable: recover record state. |
-| same | different | `{}` | `{}` | `UpsertRecord` | The indexed error state differs from the file: recover record state. |
-| different | same | `{}` | `{}` | `Delete`, then `UpsertRecord` | The indexed id differs from the file: move the relation and recover record state. |
-| different | different | `{}` | `{}` | `Delete`, then `UpsertRecord` | The indexed id and record differ from the file: move the relation and recover record state. |
+| same | same | same | `{}` | `{}` | `UpsertRecord` |
+| same | same | different | `{}` | `{}` | `UpsertRecord` |
+| same | different | same | `{}` | `{}` | `UpsertRecord` |
+| same | different | different | `{}` | `{}` | `UpsertRecord` |
+| different | same | same | `{}` | `{}` | `Delete`, then `UpsertRecord` |
+| different | same | different | `{}` | `{}` | `Delete`, then `UpsertRecord` |
+| different | different | same | `{}` | `{}` | `Delete`, then `UpsertRecord` |
+| different | different | different | `{}` | `{}` | `Delete`, then `UpsertRecord` |
+
+The indexed error state can be recovered.
 
 #### Table 2.7. Error Comparison
 
 ```text
 Fixed = {PF=1, PS=1, EF=1, ES=1}
-Disabled = {RI}
+Disabled = {RI, RS}
 Available = {RF, RE}
 ```
 
@@ -398,9 +410,9 @@ Use current GetState result -> PS, ES, indexed state
 │  └─ EF=1 -> Skip
 └─ PF=1, PS=1
    ├─ EF=0, ES=0
-   │  ├─ RI=same, RF=same      -> Skip
-   │  ├─ RI=same, RF=different -> UpsertRecord
-   │  └─ RI=different          -> Delete, then UpsertRecord
+   │  ├─ RI=same, RF=same, RS=same -> Skip
+   │  ├─ RI=same, otherwise        -> UpsertRecord
+   │  └─ RI=different              -> Delete, then UpsertRecord
    ├─ EF=1, ES=0 -> UpsertError
    ├─ EF=0, ES=1
    │  ├─ RI=same      -> UpsertRecord
@@ -505,6 +517,8 @@ The id lock mismatch branch comes first because it prevented the current reconci
 
 ## Chapter 4. File Format Update
 
+This chapter applies only when schema versioning is enabled and `CurrentSchemaVersion` has a value. When versioning is not used, `CurrentSchemaVersion` is absent and reconciliation skips the entire file format update flow: it does not calculate `FileUpdateIntent` or `FileUpdateDecision` and performs only index reconciliation.
+
 This chapter uses `SchemaVersion`, `CurrentSchemaVersion`, `CurrentFileName`, and `Fingerprint` as defined in [Index Data Model](./index-data-model.md). `ReadFile` converts a record to `CurrentSchemaVersion` and returns it alongside the file's original on-disk `SchemaVersion`; this conversion happens in memory and does not itself change the file on disk. Updating the file requires writing the record back to disk and then writing the resulting new fingerprint to the index.
 
 The file update is part of full reconciliation: it uses an already obtained `ReadResult`, runs under the same id locks, and changes the observed file state, which must then be reflected in the index. A user operation that reads a file on its own does not trigger this update — it may return the converted record without waiting for an additional disk write. The update happens later, in a background reconciliation pass.
@@ -533,7 +547,7 @@ The file update trees use the inputs, availability rules, and observation bounda
 
 ```text
 M = U ∪ {SA, CF}
-  = {PF, PS, EF, ES, RI, RF, RE, SA, CF}
+  = {PF, PS, EF, ES, RI, RF, RS, RE, SA, CF}
 ```
 
 ### Availability Rules
@@ -580,7 +594,7 @@ The pre-read tree determines whether the file must be read to update its format.
 
 ```text
 Fixed = {}
-Disabled = {EF, RI, RE}
+Disabled = {EF, RI, RS, RE}
 Available = {PF, PS, ES, RF, SA, CF}
 ```
 
@@ -595,7 +609,7 @@ Available = {PF, PS, ES, RF, SA, CF}
 
 ```text
 Fixed = {PF=0, PS=1}
-Disabled = {EF, RI, RF, RE, SA, CF}
+Disabled = {EF, RI, RF, RS, RE, SA, CF}
 Available = {ES}
 ```
 
@@ -608,7 +622,7 @@ Available = {ES}
 
 ```text
 Fixed = {PF=1, PS=1}
-Disabled = {EF, RI, RE}
+Disabled = {EF, RI, RS, RE}
 Available = {ES, RF, SA, CF}
 ```
 
@@ -623,7 +637,7 @@ Available = {ES, RF, SA, CF}
 
 ```text
 Fixed = {PF=1, PS=1, ES=0, RF=same}
-Disabled = {EF, RI, RE}
+Disabled = {EF, RI, RS, RE}
 Available = {SA, CF}
 ```
 
@@ -643,7 +657,7 @@ The post-read tree runs after a read attempt and determines `FileUpdateIntent` a
 M_post = {PF, EF, SA}
 ```
 
-`PS`, `ES`, `RI`, `RF`, and `RE` are not inputs to this tree and do not affect `FileUpdateIntent`. `CF` is also unavailable at this stage and will be calculated after executing `IndexDecision`.
+`PS`, `ES`, `RI`, `RF`, `RS`, and `RE` are not inputs to this tree and do not affect `FileUpdateIntent`. `CF` is also unavailable at this stage and will be calculated after executing `IndexDecision`.
 
 #### Table 4.5. Presence
 
@@ -734,8 +748,8 @@ IndexDecision=ReadFile OR FileUpdateIntent=ReadFile
 #### Post-Read Decision
 
 ```text
-Post-read observation -> PF, PS, EF, ES, RI, RF, RE, SA
-├─ IndexDecision inputs      -> PF, PS, EF, ES, RI, RF, RE
+Post-read observation -> PF, PS, EF, ES, RI, RF, RS, RE, SA
+├─ IndexDecision inputs      -> PF, PS, EF, ES, RI, RF, RS, RE
 │  └─ Compact Post-Read Decision Tree from Chapter 2
 └─ FileUpdateIntent inputs   -> PF, EF, SA
    ├─ PF=0                 -> DoNothing
@@ -759,6 +773,8 @@ File update inputs -> FileUpdateIntent, CF
 ## Chapter 5. Algorithm Implementation
 
 This chapter combines the index decisions from Chapter 2, the retry decisions from Chapter 3, and the file update decisions from Chapter 4 into one reconciliation algorithm.
+
+The pseudocode below includes the Chapter 4 flow and assumes that schema versioning is enabled. A production implementation must also support tables without versioning. When `CurrentSchemaVersion` is absent, it must omit all Chapter 4 logic: `FileUpdateIntent` and `FileUpdateDecision` are not calculated, and reconciliation executes only the index and retry decisions. The pseudocode intentionally remains unchanged because it describes the complete versioned algorithm rather than every implementation optimization.
 
 ### Full Algorithm Scheme
 

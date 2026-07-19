@@ -290,7 +290,7 @@ public class DatabaseOperationProcessorTests
         using (var recordScope = await scope.LockRecordAsync("id-1"))
         {
             var fp = new FileStore().GetFileFingerprint(extraPath);
-            var upsertResult = recordScope.Upsert(extraFileName, fp, new TestRecord("id-1", 1, "extra"));
+            var upsertResult = recordScope.Upsert(extraFileName, fp, 1, new TestRecord("id-1", 1, "extra"));
             Assert.NotEqual(IndexOperationResult.BlockedByAnotherId, upsertResult);
         }
 

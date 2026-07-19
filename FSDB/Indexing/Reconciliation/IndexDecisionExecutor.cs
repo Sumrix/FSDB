@@ -3,15 +3,13 @@ using FSDB.Encoding;
 using FSDB.FileStorage;
 using FSDB.Indexing.Scopes;
 using FSDB.Indexing.State;
-using FSDB.Model;
 
 namespace FSDB.Indexing.Reconciliation;
 
-public class FileReconciliationExecutor<TKey, TRecord, TProjection>
+public class IndexDecisionExecutor<TKey, TRecord, TProjection>
     where TKey : notnull
-    where TRecord : class, IRecord<TKey>
 {
-    public FileReconciliationExecutionResult Execute(
+    public IndexDecisionExecutionResult ExecuteIndexDecision(
         FileReconciliationDecision decision,
         string fileName,
         FileFingerprint fingerprint,
@@ -22,23 +20,30 @@ public class FileReconciliationExecutor<TKey, TRecord, TProjection>
         IndexOperationResult result;
         switch (decision)
         {
+            case FileReconciliationDecision.Skip:
+                return IndexDecisionExecutionResult.Applied;
+
             case FileReconciliationDecision.Delete:
                 result = indexedRecordScope!.DeleteFile(fileName);
                 return result != IndexOperationResult.Applied
                     ? throw new InvalidOperationException("Delete operation did not apply successfully.")
-                    : FileReconciliationExecutionResult.Applied;
+                    : IndexDecisionExecutionResult.Applied;
 
             case FileReconciliationDecision.UpsertRecord:
-                result = fileRecordScope!.Upsert(fileName, fingerprint, readResult.Value.Record);
+                result = fileRecordScope!.Upsert(
+                    fileName,
+                    fingerprint,
+                    readResult.Value.SourceSchemaVersion,
+                    readResult.Value.Record);
                 return result switch
                 {
-                    IndexOperationResult.Applied => FileReconciliationExecutionResult.Applied,
+                    IndexOperationResult.Applied => IndexDecisionExecutionResult.Applied,
                     IndexOperationResult.NoChanges =>
                         throw new InvalidOperationException("Upsert operation did not apply successfully."),
                     IndexOperationResult.BlockedByAnotherId =>
                         indexedRecordScope != null
                             ? throw new InvalidOperationException("Upsert operation did not apply successfully.")
-                            : FileReconciliationExecutionResult.IdLockMismatch,
+                            : IndexDecisionExecutionResult.IdLockMismatch,
                     _ => throw new ArgumentOutOfRangeException(nameof(result), result, null)
                 };
 
@@ -46,7 +51,7 @@ public class FileReconciliationExecutor<TKey, TRecord, TProjection>
                 result = indexedRecordScope!.Upsert(fileName, fingerprint, readResult.Error!.ToErrorInfo());
                 return result != IndexOperationResult.Applied
                     ? throw new InvalidOperationException("Error upsert operation did not apply successfully.")
-                    : FileReconciliationExecutionResult.Applied;
+                    : IndexDecisionExecutionResult.Applied;
 
             case FileReconciliationDecision.DeleteThenUpsertRecord:
                 result = indexedRecordScope!.DeleteFile(fileName);
@@ -55,17 +60,21 @@ public class FileReconciliationExecutor<TKey, TRecord, TProjection>
                     throw new InvalidOperationException("Delete operation did not apply successfully.");
                 }
 
-                result = fileRecordScope!.Upsert(fileName, fingerprint, readResult.Value.Record);
+                result = fileRecordScope!.Upsert(
+                    fileName,
+                    fingerprint,
+                    readResult.Value.SourceSchemaVersion,
+                    readResult.Value.Record);
                 return result switch
                 {
-                    IndexOperationResult.Applied => FileReconciliationExecutionResult.Applied,
+                    IndexOperationResult.Applied => IndexDecisionExecutionResult.Applied,
                     IndexOperationResult.NoChanges =>
                         throw new InvalidOperationException("Upsert operation did not apply successfully."),
-                    IndexOperationResult.BlockedByAnotherId => FileReconciliationExecutionResult.IdLockMismatch,
+                    IndexOperationResult.BlockedByAnotherId => IndexDecisionExecutionResult.IdLockMismatch,
                     _ => throw new ArgumentOutOfRangeException(nameof(result), result, null)
                 };
 
-            case FileReconciliationDecision.Skip or FileReconciliationDecision.ReadFile:
+            case FileReconciliationDecision.ReadFile:
                 throw new ArgumentOutOfRangeException(nameof(decision), decision,
                     "Only terminal mutation decisions can be executed.");
             default:

@@ -7,4 +7,5 @@ internal sealed record FileDto(
     byte[]? Projection,
     FileFingerprint Fingerprint,
     FileIndexStatus Status = FileIndexStatus.Committed,
-    FileErrorInfo? ErrorInfo = null);
+    FileErrorInfo? ErrorInfo = null,
+    int? SchemaVersion = null);

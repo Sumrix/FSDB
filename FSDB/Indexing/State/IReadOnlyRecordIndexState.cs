@@ -13,5 +13,5 @@ public interface IReadOnlyRecordIndexState<TKey, TProjection>
 
     IReadOnlyDictionary<string, IReadOnlyFileIndexState<TKey, TProjection>> Files { get; }
 
-    FileIndexState<TKey, TProjection> GetCurrentFileState();
+    IReadOnlyFileIndexState<TKey, TProjection> GetCurrentFileState();
 }

@@ -10,6 +10,8 @@ public class RecordCodec<TKey, TRecord>(DecoderPolicy<TRecord> decoderPolicy)
     : IRecordCodec<TKey, TRecord>
     where TRecord : IRecord<TKey>
 {
+    public int? CurrentSchemaVersion => decoderPolicy.CurrentSchemaVersion;
+
     public async Task<RecordDecodeResult<TRecord>> DecodeAsync(Stream jsonStream, CancellationToken ct)
     {
         using var document = await JsonDocument.ParseAsync(jsonStream, cancellationToken: ct);

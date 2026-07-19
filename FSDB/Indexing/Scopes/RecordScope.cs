@@ -28,9 +28,13 @@ public class RecordScope<TKey, TRecord, TProjection>(
         return engine.CommitReservedFileName(Id, fileName, fingerprint, record);
     }
 
-    public IndexOperationResult Upsert(string fileName, FileFingerprint fingerprint, TRecord record)
+    public IndexOperationResult Upsert(
+        string fileName,
+        FileFingerprint fingerprint,
+        int? schemaVersion,
+        TRecord record)
     {
-        return engine.Upsert(Id, fileName, fingerprint, record);
+        return engine.Upsert(Id, fileName, fingerprint, schemaVersion, record);
     }
 
     public IndexOperationResult Upsert(string fileName, FileFingerprint fingerprint, FileErrorInfo errorInfo)

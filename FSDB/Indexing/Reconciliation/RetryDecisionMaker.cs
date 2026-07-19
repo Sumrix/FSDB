@@ -3,9 +3,9 @@ using FSDB.Retry;
 
 namespace FSDB.Indexing.Reconciliation;
 
-public class FileReconciliationRetryDecisionMaker
+public class RetryDecisionMaker
 {
-    public RetryDecision MakeDecision(FileError? latestReadError, bool idLockMismatch)
+    public RetryDecision MakeDecision(FileError? latestFileError, bool idLockMismatch)
     {
         // See docs/index-reconciliation-rulebook.md, Chapter 3: Retry Decision.
         if (idLockMismatch)
@@ -13,7 +13,7 @@ public class FileReconciliationRetryDecisionMaker
             return RetryDecision.RetryWithMinBackoff;
         }
 
-        return latestReadError?.Persistence == FileErrorPersistence.Transient
+        return latestFileError?.Persistence == FileErrorPersistence.Transient
             ? RetryDecision.RetryWithBackoff
             : RetryDecision.Complete;
     }

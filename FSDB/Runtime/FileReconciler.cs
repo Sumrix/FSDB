@@ -221,6 +221,7 @@ internal sealed class FileReconciler<TKey, TRecord, TProjection>(
         var decodeResult = readResult.Value!;
         state.DiskIdOption = Option.Some(decodeResult.Record.Id);
         state.DecodeResult = decodeResult;
+        state.SchemaVersion = decodeResult.SourceSchemaVersion;
         logger.LogTrace(
             "File content loaded from disk: file=\"{File}\" diskId={DiskId} fingerprint=\"{Fingerprint}\" schemaConverted={SchemaConverted} fromVersion={FromVersion} toVersion={ToVersion}",
             state.FileName,
@@ -277,7 +278,11 @@ internal sealed class FileReconciler<TKey, TRecord, TProjection>(
             if (state.DiskIdOption.HasValue)
             {
                 await TryPersistUpgradedRecordAsync(state, diskRecordScope!, state.DecodeResult!.Value, ct);
-                var result = diskRecordScope!.Upsert(state.FileName, state.Fingerprint, state.DecodeResult!.Value.Record);
+                var result = diskRecordScope!.Upsert(
+                    state.FileName,
+                    state.Fingerprint,
+                    state.SchemaVersion,
+                    state.DecodeResult!.Value.Record);
                 
                 status = result == IndexOperationResult.Applied
                     ? StopStatus.UpdatedIndex
@@ -309,7 +314,11 @@ internal sealed class FileReconciler<TKey, TRecord, TProjection>(
             if (state.DiskIdOption.HasValue)
             {
                 await TryPersistUpgradedRecordAsync(state, diskRecordScope!, state.DecodeResult!.Value, ct);
-                var result = diskRecordScope!.Upsert(state.FileName, state.Fingerprint, state.DecodeResult!.Value.Record);
+                var result = diskRecordScope!.Upsert(
+                    state.FileName,
+                    state.Fingerprint,
+                    state.SchemaVersion,
+                    state.DecodeResult!.Value.Record);
 
                 status = result == IndexOperationResult.Applied
                     ? state.IndexIdOption.HasValue
@@ -344,6 +353,7 @@ internal sealed class FileReconciler<TKey, TRecord, TProjection>(
         if (writeResult.IsSuccess)
         {
             state.Fingerprint = writeResult.Fingerprint.Value;
+            state.SchemaVersion = decodeResult.TargetSchemaVersion;
             logger.LogTrace(
                 "Upgraded record persisted to disk: file=\"{File}\" diskId={DiskId} fingerprint=\"{Fingerprint}\" fromVersion={FromVersion} toVersion={ToVersion}",
                 state.FileName,
@@ -404,6 +414,7 @@ internal sealed class FileReconciler<TKey, TRecord, TProjection>(
         public Option<TKey> DiskIdOption { get; set; }
         public IReadOnlyFileIndexState<TKey, TProjection>? IndexedFileState { get; set; }
         public RecordDecodeResult<TRecord>? DecodeResult { get; set; }
+        public int? SchemaVersion { get; set; }
         public FileErrorInfo? ErrorInfo { get; set; }
 
     }

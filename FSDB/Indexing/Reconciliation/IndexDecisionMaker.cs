@@ -7,12 +7,12 @@ using FSDB.Model;
 
 namespace FSDB.Indexing.Reconciliation;
 
-public class FileReconciliationDecisionMaker<TKey, TRecord, TProjection>
+public class IndexDecisionMaker<TKey, TRecord, TProjection>
     where TRecord : IRecord<TKey>
 {
     private readonly IEqualityComparer<TKey> _keyEqualityComparer;
 
-    public FileReconciliationDecisionMaker(IEqualityComparer<TKey> keyEqualityComparer)
+    public IndexDecisionMaker(IEqualityComparer<TKey> keyEqualityComparer)
     {
         ArgumentNullException.ThrowIfNull(keyEqualityComparer);
         _keyEqualityComparer = keyEqualityComparer;
@@ -79,7 +79,8 @@ public class FileReconciliationDecisionMaker<TKey, TRecord, TProjection>
         }
 
         return indexedState.ErrorInfo is not null ||
-               indexedState.Fingerprint != readResult.Fingerprint
+               indexedState.Fingerprint != readResult.Fingerprint ||
+               indexedState.SchemaVersion != readResult.Value.SourceSchemaVersion
             ? FileReconciliationDecision.UpsertRecord
             : FileReconciliationDecision.Skip;
     }

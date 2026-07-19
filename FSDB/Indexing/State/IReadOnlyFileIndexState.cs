@@ -16,4 +16,6 @@ public interface IReadOnlyFileIndexState<TKey, TProjection>
     TProjection? Projection { get; }
 
     FileFingerprint Fingerprint { get; }
+
+    int? SchemaVersion { get; }
 }
