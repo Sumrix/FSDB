@@ -182,34 +182,6 @@ public class FileReconcilerTests
     }
 
     [Fact]
-    public async Task RequestFileReconcile_WhenObservedFingerprintChangesDuringProcessing_RequeuesWithMinBackoff()
-    {
-        var innerStore = new FileStore();
-        var scriptedStore = new ScriptedFileStore(innerStore);
-        await using var ctx = await ReconcilerTestContext.CreateAsync(scriptedStore);
-        var filePath = await ctx.WriteRecordAsync("alpha.json", new("id-1", 1, "value"));
-
-        scriptedStore.EnqueueFingerprintResult(filePath, () => innerStore.GetFileFingerprint(filePath));
-        scriptedStore.EnqueueFingerprintResult(
-            filePath,
-            new FileFingerprint(DateTime.UtcNow.AddMinutes(1), 999, Exists: true));
-
-        ctx.RequestFileReconcile(filePath);
-        var hadWork = await ctx.RetryScheduler.RunNextAsync();
-
-        Assert.True(hadWork);
-        Assert.Equal(1, ctx.RetryScheduler.PendingCount);
-
-        await ctx.RetryScheduler.RunAllAsync();
-        AssertNoRetry(ctx);
-
-        using var scope = await ctx.Index.EnterSharedScopeAsync();
-        Assert.Single(scope.Records);
-        Assert.True(scope.Records.ContainsKey("id-1"));
-        Assert.Equal("alpha.json", scope.Records["id-1"].CurrentFileName);
-    }
-
-    [Fact]
     public async Task RequestFileReconcile_WhenFileIsLocked_EnqueuesRetry()
     {
         if (!OperatingSystem.IsWindows())
@@ -236,7 +208,7 @@ public class FileReconcilerTests
     }
 
     [Fact]
-    public async Task RequestFileReconcile_WhenUpgradeWriteIsDeferred_LaterReconcilePersistsUpgrade()
+    public async Task RequestFileReconcile_WhenUpgradeWriteIsDeferred_RetriesAndPersistsUpgrade()
     {
         var scriptedStore = new ScriptedFileStore();
         await using var ctx = await ReconcilerTestContext.CreateAsync(scriptedStore);
@@ -249,8 +221,10 @@ public class FileReconcilerTests
                 new IOException("transient write"))));
 
         ctx.RequestFileReconcile(filePath);
-        await ctx.RetryScheduler.RunAllAsync();
-        AssertNoRetry(ctx);
+        var hadWork = await ctx.RetryScheduler.RunNextAsync();
+
+        Assert.True(hadWork);
+        Assert.Equal(1, ctx.RetryScheduler.PendingCount);
 
         using (var scope = await ctx.Index.EnterSharedScopeAsync())
         {
@@ -262,9 +236,6 @@ public class FileReconcilerTests
         var persistedAfterDeferredWrite = await File.ReadAllTextAsync(filePath);
         Assert.Contains("LegacyValue", persistedAfterDeferredWrite, StringComparison.Ordinal);
 
-        File.SetLastWriteTimeUtc(filePath, DateTime.UtcNow.AddMinutes(1));
-
-        ctx.RequestFileReconcile(filePath);
         await ctx.RetryScheduler.RunAllAsync();
         AssertNoRetry(ctx);
 

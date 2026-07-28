@@ -6,11 +6,13 @@ using System.Threading;
 using System.Threading.Tasks;
 using FSDB.FileStorage;
 using FSDB.Indexing;
+using FSDB.Indexing.Reconciliation;
 using FSDB.Indexing.Scopes;
 using FSDB.Indexing.State;
 using FSDB.Infrastructure.Exceptions;
 using FSDB.Infrastructure.Logging;
 using FSDB.Model;
+using FSDB.Retry;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 
@@ -22,7 +24,8 @@ internal class FileOperationProcessor<TKey, TRecord, TProjection>(
     TableIndex<TKey, TRecord, TProjection> index,
     RecordStore<TKey, TRecord> store,
     int maxFileNameReserveAttempts,
-    Action<string> requestFileReconcile,
+    FileReconciler<TKey, TRecord, TProjection> fileReconciler,
+    Action<string, bool> requestFileReconcile,
     ILogger<FileOperationProcessor<TKey, TRecord, TProjection>>? logger)
     where TRecord : class, IRecord<TKey>
     where TKey : notnull
@@ -47,79 +50,40 @@ internal class FileOperationProcessor<TKey, TRecord, TProjection>(
         var filePath = Path.Combine(tablePath, fileName);
         var readResult = await store.ReadAsync(filePath, ct);
 
+        var retryDecision = await fileReconciler.ContinueAfterReadAsync(
+            filePath,
+            sharedIndexScope,
+            recordScope,
+            readResult,
+            ct);
+        if (retryDecision != RetryDecision.Complete)
+        {
+            requestFileReconcile(filePath, retryDecision == RetryDecision.RetryWithMinBackoff);
+        }
+
         if (readResult.Error != null)
         {
-            _logger.LogWarning(
-                "Get read failed, marked file error info: id={Id} file=\"{File}\" errorReason={ErrorReason} errorPersistence={ErrorPersistence}",
-                id,
-                fileName,
-                readResult.Error.Reason,
-                readResult.Error.Persistence);
-
-            var fingerprint = readResult.Fingerprint;
-            var errorUpsertResult = recordScope.Upsert(fileName, fingerprint, readResult.Error.ToErrorInfo());
-            if (errorUpsertResult == IndexOperationResult.BlockedByAnotherId)
-            {
-                _logger.LogDebug(
-                    "Get read error index update deferred to reconciler: id={Id} file=\"{File}\" errorReason={ErrorReason} errorPersistence={ErrorPersistence}",
-                    id,
-                    fileName,
-                    readResult.Error.Reason,
-                    readResult.Error.Persistence);
-                requestFileReconcile(filePath);
-            }
             return new ReadResult<TRecord>(null, readResult.Error, fileName);
         }
 
-        var readFingerprint = readResult.Fingerprint;
-        if (!readFingerprint.Exists)
+        if (!readResult.Fingerprint.Exists)
         {
-            _logger.LogDebug(
-                "Get file missing, removed from index: id={Id} file=\"{File}\"",
-                id,
-                fileName);
-            var deleteResult = recordScope.DeleteFile(fileName);
-            if (deleteResult == IndexOperationResult.BlockedByAnotherId)
-            {
-                _logger.LogDebug(
-                    "Get missing file index delete deferred to reconciler: id={Id} file=\"{File}\"",
-                    id,
-                    fileName);
-                requestFileReconcile(filePath);
-            }
             return new ReadResult<TRecord>(null, null, fileName);
         }
 
         var record = readResult.Value.Record;
         if (!context.KeyEqualityComparer.Equals(record.Id, id))
         {
-            var deleteResult = recordScope.DeleteFile(fileName);
             _logger.LogDebug(
-                "Get found file reassigned to another id, queued reconcile: expectedId={ExpectedId} actualId={ActualId} file=\"{File}\" indexDeleteResult={IndexDeleteResult}",
+                "Get found file assigned to another id: expectedId={ExpectedId} actualId={ActualId} file=\"{File}\" retryDecision={RetryDecision}",
                 id,
                 record.Id,
                 fileName,
-                deleteResult);
-            requestFileReconcile(filePath);
+                retryDecision);
             return new ReadResult<TRecord>(null, null, fileName);
         }
 
-        var upsertResult = recordScope.Upsert(
-            fileName,
-            readFingerprint,
-            readResult.Value.SourceSchemaVersion,
-            record);
-        if (upsertResult == IndexOperationResult.BlockedByAnotherId)
-        {
-            _logger.LogDebug(
-                "Get read index update deferred to reconciler: id={Id} file=\"{File}\" fingerprint=\"{Fingerprint}\"",
-                id,
-                fileName,
-                readFingerprint);
-            requestFileReconcile(filePath);
-        }
         _logger.LogTrace("Get hit: id={Id} file=\"{File}\"", id, fileName);
-
         return new ReadResult<TRecord>(record, null, fileName);
     }
 

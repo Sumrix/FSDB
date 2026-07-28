@@ -6,6 +6,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using FSDB.FileStorage;
 using FSDB.Indexing;
+using FSDB.Indexing.Reconciliation;
 using FSDB.Indexing.State;
 using FSDB.Infrastructure.Collections;
 using FSDB.Infrastructure.Helpers;
@@ -104,7 +105,7 @@ public class TableEngine<TKey, TRecord, TProjection> :
             tablePath,
             index,
             fileReconciler,
-            path => retryScheduler.Enqueue(path, fileReconciler.ReconcileAsync),
+            (path, minBackoff) => retryScheduler.Enqueue(path, fileReconciler.ReconcileAsync, minBackoff),
             loggerFactory.CreateLogger<DirectoryReconciler<TKey, TRecord, TProjection>>());
 
         var fileProcessor = new FileOperationProcessor<TKey, TRecord, TProjection>(
@@ -113,7 +114,8 @@ public class TableEngine<TKey, TRecord, TProjection> :
             index,
             operationStore,
             options.MaxFileNameReserveAttempts,
-            path => retryScheduler.Enqueue(path, fileReconciler.ReconcileAsync),
+            fileReconciler,
+            (path, minBackoff) => retryScheduler.Enqueue(path, fileReconciler.ReconcileAsync, minBackoff),
             loggerFactory.CreateLogger<FileOperationProcessor<TKey, TRecord, TProjection>>());
 
         var dbProcessor = new DatabaseOperationProcessor<TKey, TRecord, TProjection>(

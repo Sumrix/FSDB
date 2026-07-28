@@ -5,6 +5,7 @@ using System.Threading.Tasks;
 using FSDB.Encoding;
 using FSDB.FileStorage;
 using FSDB.Indexing;
+using FSDB.Indexing.Reconciliation;
 using FSDB.Model;
 using FSDB.Runtime;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -94,7 +95,7 @@ internal sealed class ReconcilerTestContext : IAsyncDisposable
             tablePath,
             index,
             fileReconciler,
-            path => retryScheduler.Enqueue(path, fileReconciler.ReconcileAsync),
+            (path, minBackoff) => retryScheduler.Enqueue(path, fileReconciler.ReconcileAsync, minBackoff),
             NullLogger<DirectoryReconciler<string, TestRecord, string>>.Instance);
 
         return new ReconcilerTestContext(

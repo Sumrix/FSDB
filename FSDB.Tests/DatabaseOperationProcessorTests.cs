@@ -6,6 +6,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using FSDB.FileStorage;
 using FSDB.Indexing;
+using FSDB.Indexing.Reconciliation;
 using FSDB.Indexing.State;
 using FSDB.Infrastructure.Exceptions;
 using FSDB.Model;
@@ -84,6 +85,7 @@ public class DatabaseOperationProcessorTests
         Assert.Null(result.Record);
         Assert.Equal(fileName, result.FileName);
         Assert.NotNull(result.Error?.Exception);
+        Assert.Equal([(Path.Combine(ctx.TablePath, fileName), false)], ctx.ReconcileRequests);
         await ctx.AssertHasSingleErrorInfoFileAsync("id-1", FileErrorReason.Unavailable);
     }
 
@@ -184,7 +186,7 @@ public class DatabaseOperationProcessorTests
         Assert.True(result.IsSuccess);
         Assert.Null(result.Record);
         Assert.Equal(fileName, result.FileName);
-        Assert.Equal([filePath], ctx.ReconcileRequests);
+        Assert.Equal([(filePath, true)], ctx.ReconcileRequests);
         await ctx.AssertIndexEmptyAsync();
     }
 
@@ -351,7 +353,7 @@ public class DatabaseOperationProcessorTests
         public DelegatingFileStore FileStore { get; }
         public DatabaseOperationProcessor<string, TestRecord, string> Processor { get; }
         public FileOperationProcessor<string, TestRecord, string> FileProcessor { get; }
-        public List<string> ReconcileRequests { get; }
+        public List<(string Path, bool MinBackoff)> ReconcileRequests { get; }
 
         private TestContext(
             string rootPath,
@@ -360,7 +362,7 @@ public class DatabaseOperationProcessorTests
             DelegatingFileStore fileStore,
             DatabaseOperationProcessor<string, TestRecord, string> processor,
             FileOperationProcessor<string, TestRecord, string> fileProcessor,
-            List<string> reconcileRequests)
+            List<(string Path, bool MinBackoff)> reconcileRequests)
         {
             _rootPath = rootPath;
             TablePath = tablePath;
@@ -399,7 +401,7 @@ public class DatabaseOperationProcessorTests
             var index = new TableIndex<string, TestRecord, string>(indexEngine, context);
 
             var fileStore = new DelegatingFileStore(new FileStore());
-            var reconcileRequests = new List<string>();
+            var reconcileRequests = new List<(string Path, bool MinBackoff)>();
             var store = new RecordStore<string, TestRecord>(
                 recordCodec,
                 new RetryFileStore(
@@ -411,13 +413,19 @@ public class DatabaseOperationProcessorTests
                         Delete = new RetryFileStoreOperationOptions { MaxAttempts = 5 }
                     },
                     null));
+            var fileReconciler = new FileReconciler<string, TestRecord, string>(
+                context,
+                fileStore,
+                store,
+                index);
             var fileProcessor = new FileOperationProcessor<string, TestRecord, string>(
                 tablePath,
                 context,
                 index,
                 store,
                 maxFileNameReserveAttempts: 5,
-                reconcileRequests.Add,
+                fileReconciler,
+                (path, minBackoff) => reconcileRequests.Add((path, minBackoff)),
                 logger: null);
             var processor = new DatabaseOperationProcessor<string, TestRecord, string>(
                 fileProcessor);

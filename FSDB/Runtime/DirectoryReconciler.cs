@@ -6,6 +6,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using FSDB.Indexing;
+using FSDB.Indexing.Reconciliation;
 using FSDB.Infrastructure.Helpers;
 using FSDB.Infrastructure.Logging;
 using FSDB.Model;
@@ -18,7 +19,7 @@ internal sealed class DirectoryReconciler<TKey, TRecord, TProjection>(
     string tablePath,
     TableIndex<TKey, TRecord, TProjection> index,
     FileReconciler<TKey, TRecord, TProjection> fileReconciler,
-    Action<string> requestFileReconcile,
+    Action<string, bool> requestFileReconcile,
     ILogger logger)
     where TRecord : class, IRecord<TKey>
     where TKey : notnull
@@ -65,7 +66,7 @@ internal sealed class DirectoryReconciler<TKey, TRecord, TProjection>(
             var result = await fileReconciler.ReconcileAsync(filePath, ct);
             if (result != RetryDecision.Complete)
             {
-                requestFileReconcile(filePath);
+                requestFileReconcile(filePath, result == RetryDecision.RetryWithMinBackoff);
             }
         }
 
