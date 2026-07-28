@@ -46,26 +46,37 @@ public class TimeBucketQueueManager : IRetryScheduler<string>
             effectiveLoggerFactory.CreateLogger<BucketTimerScheduler>());
     }
 
-    public void Enqueue(string value, Func<string, CancellationToken, Task<RetryDecision>> processor)
+    public void Enqueue(
+        string value,
+        Func<string, CancellationToken, Task<RetryDecision>> processor,
+        bool minBackoff = false)
     {
         ArgumentNullException.ThrowIfNull(value);
         ArgumentNullException.ThrowIfNull(processor);
 
         long targetBucket = _scheduler.GetCurrentBucket() + 1;
 
-        _items.AddOrUpdate(value,
-            _ =>
+        var current = _items.AddOrUpdate(value,
+            _ => new QueueItem
             {
-                _scheduler.Schedule(targetBucket);
-                return new QueueItem
-                {
-                    Value = value,
-                    Processor = processor,
-                    TargetBucket = targetBucket,
-                    CurrentBackoff = 1
-                };
+                Value = value,
+                Processor = processor,
+                TargetBucket = targetBucket,
+                CurrentBackoff = 1,
+                MinBackoffRequested = minBackoff
             },
-            (_, existing) => existing);
+            (_, existing) => minBackoff
+                ? new QueueItem
+                {
+                    Value = existing.Value,
+                    Processor = existing.Processor,
+                    TargetBucket = targetBucket,
+                    CurrentBackoff = 1,
+                    MinBackoffRequested = true
+                }
+                : existing);
+
+        _scheduler.Schedule(current.TargetBucket);
     }
 
     /// <summary>
@@ -134,18 +145,22 @@ public class TimeBucketQueueManager : IRetryScheduler<string>
             }
         }
 
-        long newTarget = _scheduler.GetCurrentBucket() + backoff;
-
         item.CurrentBackoff = backoff;
-        item.TargetBucket = newTarget;
+        item.TargetBucket = _scheduler.GetCurrentBucket() + backoff;
+        item.MinBackoffRequested = false;
 
-        _logger.LogDebug("Scheduling retry: item={Item} bucket={Bucket}", item.Value, newTarget);
+        // Processing took the item out of the dictionary, so a concurrent Enqueue could have put a
+        // competing one back. A minimum backoff request wins; a plain one loses to the progression
+        // already in flight.
+        var winner = _items.AddOrUpdate(
+            item.Value,
+            item,
+            (_, existing) => existing.MinBackoffRequested ? existing : item);
+
+        _logger.LogDebug("Scheduling retry: item={Item} bucket={Bucket}", item.Value, winner.TargetBucket);
 
         // Re-schedule in the engine
-        _scheduler.Schedule(newTarget);
-
-        // Put back into dictionary
-        _items.AddOrUpdate(item.Value, item, (_, _) => item);
+        _scheduler.Schedule(winner.TargetBucket);
     }
 
     public void Dispose()
@@ -164,11 +179,15 @@ public class TimeBucketQueueManager : IRetryScheduler<string>
         _lifetimeCts.Dispose();
     }
 
+    // An item is never mutated while it is in the dictionary: Enqueue replaces it and ScheduleRetry
+    // only touches an item it has already taken out. That is what makes the compare and swap inside
+    // AddOrUpdate meaningful, so this must stay a class with reference equality, not a record.
     private sealed class QueueItem
     {
         public required string Value { get; init; }
         public required Func<string, CancellationToken, Task<RetryDecision>> Processor { get; init; }
         public required long TargetBucket { get; set; }
         public required int CurrentBackoff { get; set; }
+        public bool MinBackoffRequested { get; set; }
     }
 }

@@ -294,7 +294,10 @@ public sealed class FileSystemDatabaseStartTests
         public bool Disposed { get; private set; }
         public int EnqueueCount { get; private set; }
 
-        public void Enqueue(string value, Func<string, CancellationToken, Task<RetryDecision>> processor)
+        public void Enqueue(
+            string value,
+            Func<string, CancellationToken, Task<RetryDecision>> processor,
+            bool minBackoff = false)
         {
             ObjectDisposedException.ThrowIf(Disposed, this);
             EnqueueCount++;
