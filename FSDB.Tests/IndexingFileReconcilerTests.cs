@@ -13,6 +13,10 @@ using FSDB.Tests.TestSupport;
 
 namespace FSDB.Tests;
 
+// Decision makers and executors intentionally have no duplicate unit tests. They are direct,
+// elementary translations of the decision tables in docs/index-reconciliation-rulebook.md;
+// reproducing those tables as test expectations would create a second implementation of the
+// same rules. These tests focus on the non-obvious orchestration behavior of FileReconciler.
 public class IndexingFileReconcilerTests
 {
     [Fact]
@@ -238,7 +242,7 @@ public class IndexingFileReconcilerTests
     }
 
     [Fact]
-    public async Task ContinueAfterRead_WithDifferentFileId_ReturnsRetryWithoutChangingIndex()
+    public async Task ContinueAfterRead_WithDifferentFileId_DeletesStaleIndexEntryAndRequestsRetry()
     {
         await using var fixture = await Fixture.CreateUnversionedAsync();
         var path = await fixture.WriteAsync("record.json", new TestRecord("id-1", 1, "first"));
@@ -256,7 +260,7 @@ public class IndexingFileReconcilerTests
             readResult);
 
         result.Should().Be(RetryDecision.RetryWithMinBackoff);
-        fixture.Index.Records["id-1"].GetCurrentFileState().Projection.Should().Be("first");
+        fixture.Index.Records.Should().NotContainKey("id-1");
         fixture.Index.Records.Should().NotContainKey("id-2");
     }
 

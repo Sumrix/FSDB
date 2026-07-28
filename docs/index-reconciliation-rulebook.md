@@ -55,16 +55,18 @@ The algorithm compares the observed file and indexed state using these inputs:
 | Schema relation | Do the observed and indexed schema versions match? |
 | Error relation | Do the observed and indexed errors match? |
 
-From the available inputs, the index reconciliation algorithm produces one of these decisions:
+From the available inputs, the index reconciliation algorithm produces one of these decisions. A decision mutates at most two ids, so it is described as two parts: the `indexedId` part mutates the id the path is currently attached to in the index, and the `diskId` part mutates the id read from the file.
 
-| Decision | Meaning |
-| --- | --- |
-| `Skip` | The observed file and indexed state are already consistent, or there is nothing that can be indexed. |
-| `ReadFile` | More data is required; read the file and continue analysis. |
-| `Delete` | Remove the path from its indexed id. |
-| `UpsertRecord` | Add or update readable record state. |
-| `UpsertError` | Add or update error state for a path whose indexed id is known. |
-| `Delete`, then `UpsertRecord` | Move the path from the indexed id to the id read from the file. |
+| Decision | indexedId part | diskId part | Meaning |
+| --- | --- | --- | --- |
+| `Skip` | — | — | The observed file and indexed state are already consistent, or there is nothing that can be indexed. |
+| `ReadFile` | — | — | More data is required; read the file and continue analysis. |
+| `Delete` | `Delete` | — | Remove the path from its indexed id. |
+| `UpsertRecord` | — | `UpsertRecord` | Add or update readable record state. |
+| `UpsertError` | `UpsertError` | — | Add or update error state for a path whose indexed id is known. |
+| `Delete`, then `UpsertRecord` | `Delete` | `UpsertRecord` | Move the path from the indexed id to the id read from the file. |
+
+An empty part changes nothing. `ReadFile` is not a terminal decision, so it has no parts at all: it continues the analysis instead of changing the index. `UpsertError` belongs to the `indexedId` part because an error file has no readable id, so error state can only be written to an already known indexed id.
 
 The file update algorithm produces one of these decisions:
 
@@ -75,7 +77,7 @@ The file update algorithm produces one of these decisions:
 
 #### Update the Index
 
-`Skip` completes index reconciliation without changing the index. Every other terminal decision changes the index and must be executed while holding all required id locks. The executable algorithm is defined in [Chapter 5. Algorithm Implementation](#chapter-5-algorithm-implementation).
+`Skip` completes index reconciliation without changing the index. Every other decision changes it, and each of its parts must be executed while holding the lock on the id that part mutates. [The Lock Boundary](#the-lock-boundary) explains why those locks are needed and how they are acquired, and [Chapter 3](#chapter-3-retry-decision) explains what happens when the held locks turn out not to cover every part. The executable algorithm is defined in [Chapter 5. Algorithm Implementation](#chapter-5-algorithm-implementation).
 
 ### Why the Decision Model Is Exhaustive
 
@@ -428,7 +430,9 @@ File reconciliation produces two independent decisions. The reconciliation decis
 
 A retry does not imply that the reconciliation decision failed. For example, a transient read error can be written to an already known indexed id while still requesting another reconciliation attempt because the error may disappear. Conversely, a persistent read error can be represented in the index without requesting another attempt.
 
-Reconciliation can also discover that the held id locks do not cover the ids required by the current decision. The decision cannot be executed safely in that case, but the required ids are now known, so another attempt can acquire the correct locks.
+Reconciliation can also discover that the held id locks do not cover the ids required by the current decision. This is where the two parts of a decision stop being an abstraction: the `indexedId` part may be covered while the `diskId` part is not. The covered part executes, and the remaining part cannot execute safely. Only now can that leftover be accounted for, because the required ids are already known and a retry can acquire the correct locks and finish the decision from the current disk state.
+
+The order matters and is not symmetric. The `indexedId` part detaches the path from its indexed id, which is always safe to do on its own. The `diskId` part attaches the path to the id read from the file, which is not safe while the path is still attached to another id. A decision may therefore stop after its `indexedId` part, but never after its `diskId` part alone.
 
 This chapter defines only the retry decision produced by reconciliation. It does not define the scheduler implementation. A scheduler may use any queue and backoff algorithm that preserves the following contract:
 
@@ -782,47 +786,54 @@ Given the model and decision tables from the previous chapters, the algorithm ps
 
 ```text
 RetryDecision Reconcile(path)
-    pass = Decide(path)
 
-    if pass.indexDecision is Skip AND pass.fileUpdateIntent is DoNothing:
-        return MakeRetryDecision(pass.lastReadResult)
+    # Pass 1: no id locks. Decisions are discovered here, never executed.
+    pass1 = Decide(path, readCache: none)
+
+    if pass1.indexDecision is Skip AND pass1.fileUpdateIntent is DoNothing:
+        return MakeRetryDecision(pass1.lastReadResult)       # hot path: nothing to do
     else
-        requiredIdLocks = GetRequiredIdLocks(
-            pass.indexDecision,
-            pass.fileUpdateIntent)
-        acquiredLocks = Acquire(requiredIdLocks)
+        requiredIdLocks1 = GetRequiredIdLocks(
+            pass1.indexDecision,
+            pass1.fileUpdateIntent)
+        acquiredLocks = Acquire(requiredIdLocks1)
 
-        pass2 = Decide(path, pass.lastReadResult)
+        # Pass 2: the same two steps, now under the locks. Only these decisions may execute.
+        pass2 = Decide(path, readCache: pass1.lastReadResult)
 
-        if pass.indexDecision is Skip AND pass.fileUpdateIntent is DoNothing:
+        if pass2.indexDecision is Skip AND pass2.fileUpdateIntent is DoNothing:
             return MakeRetryDecision(pass2.lastReadResult)
         else
-            requiredIdLocks = GetRequiredIdLocks(
-                pass2.indexDecision,
-                pass2.fileUpdateIntent)
+            # Each part runs under the lock it needs, in the order given by the decision table.
+            # The index goes first: it recalculates CurrentFileName for the file update.
+            if acquiredLocks.Cover(pass2.indexDecision.IndexedIdPart)
+                Execute(pass2.indexDecision.IndexedIdPart, path)
 
-            if acquiredLocks.Cover(requiredIdLocks)
-                ExecuteIndexDecision(pass2.indexDecision)
+                if acquiredLocks.Cover(pass2.indexDecision.DiskIdPart)
+                    Execute(pass2.indexDecision.DiskIdPart, path)
 
-                switch pass2.fileUpdateIntent
-                case UpdateIfCurrentFile:
-                    currentFile = IsCurrentFile(pass2.lastReadResult.Id, path)
-                    fileUpdateDecision = MakeFileUpdateDecision(
-                        pass2.fileUpdateIntent,
-                        currentFile)
+                    switch pass2.fileUpdateIntent
+                    case UpdateIfCurrentFile:
+                        currentFile = IsCurrentFile(pass2.lastReadResult.Id, path)
+                        fileUpdateDecision = MakeFileUpdateDecision(
+                            pass2.fileUpdateIntent,
+                            currentFile)
 
-                    switch fileUpdateDecision
-                    case UpdateFile:
-                        writeResult = UpdateFile(path, pass2.lastReadResult.Record)
-                        ReconcileWriteResult(writeResult)
-                        return MakeRetryDecision(writeResult)
+                        switch fileUpdateDecision
+                        case UpdateFile:
+                            writeResult = UpdateFile(path, pass2.lastReadResult.Record)
+                            ReconcileWriteResult(writeResult)
+                            return MakeRetryDecision(writeResult)
+
+                        case DoNothing:
+                            return MakeRetryDecision(pass2.lastReadResult)
 
                     case DoNothing:
                         return MakeRetryDecision(pass2.lastReadResult)
 
-                case DoNothing:
-                    return MakeRetryDecision(pass2.lastReadResult)
-
+                else
+                    # The diskId part is not covered: it waits for the next attempt.
+                    return MakeRetryDecision(pass2.lastReadResult, idLockMismatch: true)
             else
                 return MakeRetryDecision(pass2.lastReadResult, idLockMismatch: true)
 
@@ -855,9 +866,11 @@ ReadResult ResolveReadFile(path, readCache, fingerprint)
 
 Here, `Reconcile` represents full reconciliation. The first pass discovers whether either the index or the file requires locked work and which ids that work may affect. The second pass confirms both decisions under those id locks. A pass is complete without locks only when its `IndexDecision` is `Skip` and its `FileUpdateIntent` is `DoNothing`.
 
-`GetRequiredIdLocks` combines the requirements of both decisions. An index mutation requires the ids affected by that mutation. `UpdateIfCurrentFile` requires the id from the successfully decoded record because `CurrentFileName` must be checked and the file must be updated while that record is locked.
+`GetRequiredIdLocks` returns the ids that must be locked to execute `IndexDecision` and `FileUpdateIntent`. For `IndexDecision` these are the ids of its parts. `FileUpdateIntent` can require a lock of its own, because a file may only be changed while its id is locked.
 
-After the second pass, the algorithm first executes `IndexDecision`. This establishes the current path-to-id relation and recalculates `CurrentFileName`. Only then does it resolve `UpdateIfCurrentFile` into a final `FileUpdateDecision`. A successful `UpdateFile` produces a new fingerprint and current physical schema version; `ReconcileWriteResult` immediately reflects that new file state in the index while the same id lock is still held.
+The nesting of the two lock checks is what implements the asymmetry described in [Chapter 3](#chapter-3-retry-decision). The `diskId` part is unreachable without having executed the `indexedId` part first, so a decision can stop after its `indexedId` part but can never execute its `diskId` part alone. Lock mismatch therefore never rolls back already safe work: the covered part stays applied, and `RetryWithMinBackoff` carries the rest to the next attempt.
+
+After the second pass, the algorithm first executes both parts of `IndexDecision`. This establishes the current path-to-id relation and recalculates `CurrentFileName`. Only then does it resolve `UpdateIfCurrentFile` into a final `FileUpdateDecision`. A successful `UpdateFile` produces a new fingerprint and current physical schema version; `ReconcileWriteResult` immediately reflects that new file state in the index while the same id lock is still held.
 
 `Decide` implements one complete decision pass. It collects the pre-read inputs and produces both `IndexDecision` and `FileUpdateIntent`. It crosses the read boundary when either decision requires `ReadFile`, then recalculates both decisions from the post-read observation. It carries the latest read result so the second pass can reuse the same file observation when the fingerprint still matches and so the retry decision can inspect the latest read error. When the current pass does not read the file, the cached result from the previous pass remains the latest read result.
 
@@ -898,15 +911,14 @@ MakeFileUpdateDecision(fileUpdateIntent, currentFile)
     -> FileUpdateDecision
 ```
 
-`DecisionExecutor` applies confirmed decisions under the required id locks. It does not choose when to read a file, when to acquire locks, or when to retry. It first applies `IndexDecision`, then applies `FileUpdateDecision` when selected and reconciles a successful write result into the index:
+`DecisionExecutor` executes one part at a time under the id lock that part requires. It does not choose when to read a file, when to acquire locks, or when to retry. `FileReconciler` gives it the `indexedId` part, then the `diskId` part, then the `FileUpdateDecision` when selected and reconciles a successful write result into the index:
 
-| Decision kind | Decision | Executor action |
+| Decision kind | Part or decision | Executor action |
 | --- | --- | --- |
-| `IndexDecision` | `Skip` | Do not change the index. |
+| `IndexDecision` | empty part | Do not change the index. |
 | `IndexDecision` | `Delete` | Remove the path from the indexed id. |
-| `IndexDecision` | `UpsertRecord` | Add or refresh readable record state. |
-| `IndexDecision` | `UpsertError` | Add or refresh error state for the indexed id. |
-| `IndexDecision` | `Delete`, then `UpsertRecord` | Move the path from the indexed id to the id read from the file. |
+| `IndexDecision` | `UpsertRecord` | Add or refresh readable record state on the id read from the file. |
+| `IndexDecision` | `UpsertError` | Add or refresh error state on the indexed id. |
 | `FileUpdateDecision` | `DoNothing` | Do not change the file. |
 | `FileUpdateDecision` | `UpdateFile` | Atomically write the decoded record in the current format and reflect the successful write result in the index. |
 
