@@ -2,248 +2,441 @@ using System;
 using System.IO;
 using System.Text.Json;
 using System.Threading.Tasks;
+using FluentAssertions;
+using FSDB.Encoding;
 using FSDB.FileStorage;
+using FSDB.Indexing;
+using FSDB.Indexing.Reconciliation;
 using FSDB.Indexing.State;
+using FSDB.Retry;
 using FSDB.Tests.TestSupport;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace FSDB.Tests;
 
+// Decision makers and executors intentionally have no duplicate unit tests. They are direct,
+// elementary translations of the decision tables in docs/index-reconciliation-rulebook.md;
+// reproducing those tables as test expectations would create a second implementation of the
+// same rules. These tests focus on the non-obvious orchestration behavior of FileReconciler.
 public class FileReconcilerTests
 {
     [Fact]
-    public async Task RequestFileReconcile_WhenNewValidFile_AddsRecordToIndex()
+    public async Task ReconcileAsync_NewReadableFile_AddsItToIndex()
     {
-        await using var ctx = await ReconcilerTestContext.CreateAsync();
-        var filePath = await ctx.WriteRecordAsync("alpha.json", new("id-1", 1, "value"));
+        await using var fixture = await Fixture.CreateUnversionedAsync();
+        var path = await fixture.WriteAsync("record.json", new TestRecord("id-1", 1, "value"));
 
-        ctx.RequestFileReconcile(filePath);
-        await ctx.RetryScheduler.RunAllAsync();
-        AssertNoRetry(ctx);
+        var result = await fixture.Reconciler.ReconcileAsync(path, default);
 
-        using var scope = await ctx.Index.EnterSharedScopeAsync();
-        var record = Assert.Single(scope.Records).Value;
-        Assert.Equal("id-1", record.Id);
-        Assert.Equal("alpha.json", record.CurrentFileName);
-        Assert.True(record.Files.TryGetValue("alpha.json", out var file));
-        Assert.True(file.Fingerprint.Exists);
-        Assert.Equal("value", file.Projection);
-        Assert.Equal("value", record.GetCurrentFileState().Projection);
+        result.Should().Be(RetryDecision.Complete);
+        fixture.Index.Records["id-1"].CurrentFileName.Should().Be("record.json");
+        fixture.Index.Records["id-1"].GetCurrentFileState().SchemaVersion.Should().BeNull();
     }
 
     [Fact]
-    public async Task RequestFileReconcile_WhenKnownFileDeleted_RemovesRecordFromIndex()
+    public async Task ReconcileAsync_WithoutVersioning_DoesNotRunFileUpdateLogic()
     {
-        await using var ctx = await ReconcilerTestContext.CreateAsync();
-        var filePath = await ctx.WriteRecordAsync("alpha.json", new("id-1", 1, "value"));
-        ctx.RequestFileReconcile(filePath);
-        await ctx.RetryScheduler.RunAllAsync();
-        AssertNoRetry(ctx);
+        var scriptedStore = new ScriptedFileStore(new FileStore());
+        await using var fixture = await Fixture.CreateUnversionedAsync(scriptedStore);
+        var path = await fixture.WriteAsync("record.json", new TestRecord("id-1", 1, "first"));
+        scriptedStore.EnqueueWriteResult(
+            path,
+            () => throw new InvalidOperationException(
+                "File update logic must not write an unversioned file."));
 
-        File.Delete(filePath);
-
-        ctx.RequestFileReconcile(filePath);
-        await ctx.RetryScheduler.RunAllAsync();
-        AssertNoRetry(ctx);
-
-        using var scope = await ctx.Index.EnterSharedScopeAsync();
-        Assert.Empty(scope.Records);
-        Assert.Empty(scope.Files);
+        await fixture.Reconciler.ReconcileAsync(path, default);
     }
 
     [Fact]
-    public async Task RequestFileReconcile_WhenFileDisappearsDuringRead_RemovesRecordFromIndex()
+    public async Task ReconcileAsync_UnexpectedException_CompletesWithoutRetry()
     {
-        var innerStore = new FileStore();
-        var scriptedStore = new ScriptedFileStore(innerStore);
-        await using var ctx = await ReconcilerTestContext.CreateAsync(scriptedStore);
-        var filePath = await ctx.WriteRecordAsync("alpha.json", new("id-1", 1, "value"));
-        ctx.RequestFileReconcile(filePath);
-        await ctx.RetryScheduler.RunAllAsync();
-        AssertNoRetry(ctx);
+        var scriptedStore = new ScriptedFileStore(new FileStore());
+        await using var fixture = await Fixture.CreateUnversionedAsync(scriptedStore);
+        var path = await fixture.WriteAsync("record.json", new TestRecord("id-1", 1, "value"));
+        scriptedStore.EnqueueFingerprintResult(
+            path,
+            () => throw new InvalidOperationException("Unexpected reconciliation failure."));
+
+        var result = await fixture.Reconciler.ReconcileAsync(path, default);
+
+        result.Should().Be(RetryDecision.Complete);
+        fixture.Index.Records.Should().NotContainKey("id-1");
+    }
+
+    [Theory]
+    [InlineData("id-1", "id-2")]
+    [InlineData("id-2", "id-1")]
+    public async Task ReconcileAsync_FileChangesId_MovesItBetweenRecords(
+        string indexedId,
+        string fileId)
+    {
+        await using var fixture = await Fixture.CreateUnversionedAsync();
+        var path = await fixture.WriteAsync("record.json", new TestRecord(indexedId, 1, "first"));
+        await fixture.Reconciler.ReconcileAsync(path, default);
+
+        await fixture.WriteAsync("record.json", new TestRecord(fileId, 1, "second"));
+        var result = await fixture.Reconciler.ReconcileAsync(path, default);
+
+        result.Should().Be(RetryDecision.Complete);
+        fixture.Index.Records.Should().NotContainKey(indexedId);
+        fixture.Index.Records[fileId].CurrentFileName.Should().Be("record.json");
+        fixture.Index.Records[fileId].GetCurrentFileState().Projection.Should().Be("second");
+    }
+
+    [Fact]
+    public async Task ReconcileAsync_FingerprintChangesAfterLock_UsesLatestReadResult()
+    {
+        var scriptedStore = new ScriptedFileStore(new FileStore());
+        await using var fixture = await Fixture.CreateUnversionedAsync(scriptedStore);
+        var path = await fixture.WriteAsync("record.json", new TestRecord("id-1", 1, "first"));
+        var firstFingerprint = new FileStore().GetFileFingerprint(path);
+        scriptedStore.EnqueueFingerprintResult(path, firstFingerprint);
+        scriptedStore.EnqueueFingerprintResult(
+            path,
+            () => ReplaceFile(path, new TestRecord("id-1", 1, "second")));
+
+        var result = await fixture.Reconciler.ReconcileAsync(path, default);
+
+        result.Should().Be(RetryDecision.Complete);
+        var state = fixture.Index.Records["id-1"].GetCurrentFileState();
+        state.Projection.Should().Be("second");
+        state.Fingerprint.Should().Be(new FileStore().GetFileFingerprint(path));
+    }
+
+    [Fact]
+    public async Task ReconcileAsync_FileIdChangesAfterLock_ReturnsMinRetryWithoutMutation()
+    {
+        var scriptedStore = new ScriptedFileStore(new FileStore());
+        await using var fixture = await Fixture.CreateUnversionedAsync(scriptedStore);
+        var path = await fixture.WriteAsync("record.json", new TestRecord("id-1", 1, "first"));
+        var firstFingerprint = new FileStore().GetFileFingerprint(path);
+        scriptedStore.EnqueueFingerprintResult(path, firstFingerprint);
+        scriptedStore.EnqueueFingerprintResult(
+            path,
+            () => ReplaceFile(path, new TestRecord("id-2", 1, "second")));
+
+        var firstResult = await fixture.Reconciler.ReconcileAsync(path, default);
+
+        firstResult.Should().Be(RetryDecision.RetryWithMinBackoff);
+        fixture.Index.Records.Should().BeEmpty();
+
+        var secondResult = await fixture.Reconciler.ReconcileAsync(path, default);
+
+        secondResult.Should().Be(RetryDecision.Complete);
+        fixture.Index.Records.Should().ContainSingle().Which.Key.Should().Be("id-2");
+        fixture.Index.Records["id-2"].GetCurrentFileState().Projection.Should().Be("second");
+    }
+
+    // The pre-read fingerprint says the file exists, the read says it does not. Feeding the stale
+    // pre-read observation to the post-read decision would keep the record with an error instead of
+    // deleting it.
+    [Fact]
+    public async Task ReconcileAsync_FileDisappearsDuringRead_UsesPostReadObservation()
+    {
+        var scriptedStore = new ScriptedFileStore(new FileStore());
+        await using var fixture = await Fixture.CreateUnversionedAsync(scriptedStore);
+        var path = await fixture.WriteAsync("record.json", new TestRecord("id-1", 1, "value"));
+        await fixture.Reconciler.ReconcileAsync(path, default);
 
         scriptedStore.EnqueueFingerprintResult(
-            filePath,
+            path,
             new FileFingerprint(DateTime.UtcNow.AddMinutes(1), 123, Exists: true));
         scriptedStore.EnqueueReadAccessResult(
-            filePath,
+            path,
             FileErrorPersistence.Persistent,
             new FileFingerprint(null, null, Exists: false));
-        scriptedStore.EnqueueFingerprintResult(
-            filePath,
-            new FileFingerprint(null, null, Exists: false));
+        scriptedStore.EnqueueFingerprintResult(path, new FileFingerprint(null, null, Exists: false));
 
-        ctx.RequestFileReconcile(filePath);
-        await ctx.RetryScheduler.RunAllAsync();
-        AssertNoRetry(ctx);
+        var result = await fixture.Reconciler.ReconcileAsync(path, default);
 
-        using var scope = await ctx.Index.EnterSharedScopeAsync();
-        Assert.Empty(scope.Records);
-        Assert.Empty(scope.Files);
+        result.Should().Be(RetryDecision.Complete);
+        fixture.Index.Records.Should().NotContainKey("id-1");
     }
 
     [Fact]
-    public async Task RequestFileReconcile_WhenKnownFileBecomesInvalid_MarksItInvalid()
+    public async Task ReconcileAsync_MissingIndexedFile_RemovesItFromIndex()
     {
-        await using var ctx = await ReconcilerTestContext.CreateAsync();
-        var filePath = await ctx.WriteRecordAsync("alpha.json", new("id-1", 1, "valid"));
-        ctx.RequestFileReconcile(filePath);
-        await ctx.RetryScheduler.RunAllAsync();
-        AssertNoRetry(ctx);
+        await using var fixture = await Fixture.CreateUnversionedAsync();
+        var path = await fixture.WriteAsync("record.json", new TestRecord("id-1", 1, "value"));
+        await fixture.Reconciler.ReconcileAsync(path, default);
 
-        await File.WriteAllTextAsync(filePath, "{ invalid json");
+        File.Delete(path);
+        var result = await fixture.Reconciler.ReconcileAsync(path, default);
 
-        ctx.RequestFileReconcile(filePath);
-        await ctx.RetryScheduler.RunAllAsync();
-        AssertNoRetry(ctx);
-
-        using var scope = await ctx.Index.EnterSharedScopeAsync();
-        var record = Assert.Single(scope.Records).Value;
-        Assert.Equal("id-1", record.Id);
-        Assert.Equal("alpha.json", record.CurrentFileName);
-        var file = Assert.Single(scope.Files).Value;
-        Assert.Equal(FileIndexStatus.Committed, file.Status);
-        Assert.Equal(FileErrorReason.Invalid, file.ErrorInfo?.Reason);
+        result.Should().Be(RetryDecision.Complete);
+        fixture.Index.Records.Should().NotContainKey("id-1");
     }
 
     [Fact]
-    public async Task RequestFileReconcile_WhenKnownFileContentCannotBeRead_MarksItUnavailable()
+    public async Task ReconcileAsync_InvalidIndexedFile_StoresErrorState()
     {
-        var scriptedStore = new ScriptedFileStore();
-        await using var ctx = await ReconcilerTestContext.CreateAsync(scriptedStore);
-        var filePath = await ctx.WriteRecordAsync("alpha.json", new("id-1", 1, "value"));
-        ctx.RequestFileReconcile(filePath);
-        await ctx.RetryScheduler.RunAllAsync();
-        AssertNoRetry(ctx);
+        await using var fixture = await Fixture.CreateUnversionedAsync();
+        var path = await fixture.WriteAsync("record.json", new TestRecord("id-1", 1, "value"));
+        await fixture.Reconciler.ReconcileAsync(path, default);
 
-        var exception = new UnauthorizedAccessException("access denied");
-        File.SetLastWriteTimeUtc(filePath, DateTime.UtcNow.AddMinutes(1));
-        scriptedStore.EnqueueReadAccessResult(filePath, FileErrorPersistence.Persistent, exception);
+        await File.WriteAllTextAsync(path, "invalid json");
+        var result = await fixture.Reconciler.ReconcileAsync(path, default);
 
-        ctx.RequestFileReconcile(filePath);
-        await ctx.RetryScheduler.RunAllAsync();
-        AssertNoRetry(ctx);
-
-        using var scope = await ctx.Index.EnterSharedScopeAsync();
-        var record = Assert.Single(scope.Records).Value;
-        Assert.Equal("id-1", record.Id);
-        Assert.Equal("alpha.json", record.CurrentFileName);
-        var file = Assert.Single(scope.Files).Value;
-        Assert.Equal(FileIndexStatus.Committed, file.Status);
-        Assert.Equal(FileErrorReason.Unavailable, file.ErrorInfo?.Reason);
-        Assert.Equal(typeof(UnauthorizedAccessException).FullName, file.ErrorInfo?.ExceptionType);
-        Assert.Equal(exception.HResult, file.ErrorInfo?.HResult);
+        result.Should().Be(RetryDecision.Complete);
+        var state = fixture.Index.Records["id-1"].GetCurrentFileState();
+        state.ErrorInfo.Should().NotBeNull();
+        state.ErrorInfo!.Reason.Should().Be(FileErrorReason.Invalid);
     }
 
     [Fact]
-    public async Task RequestFileReconcile_WhenFileIdChanges_ReassignsFileToNewRecord()
+    public async Task ReconcileAsync_LegacyCurrentFile_UpdatesFileAndIndexedPhysicalState()
     {
-        await using var ctx = await ReconcilerTestContext.CreateAsync();
-        var filePath = await ctx.WriteRecordAsync("alpha.json", new("id-old", 1, "one"));
-        ctx.RequestFileReconcile(filePath);
-        await ctx.RetryScheduler.RunAllAsync();
-        AssertNoRetry(ctx);
+        await using var fixture = await Fixture.CreateVersionedAsync();
+        var path = await fixture.WriteLegacyAsync("record.json", new LegacyTestRecord("id-1", 0, "legacy"));
 
-        await ctx.WriteRecordAsync("alpha.json", new("id-new-longer", 1, "two"));
+        var result = await fixture.Reconciler.ReconcileAsync(path, default);
 
-        ctx.RequestFileReconcile(filePath);
-        await ctx.RetryScheduler.RunAllAsync();
-        AssertNoRetry(ctx);
+        result.Should().Be(RetryDecision.Complete);
+        var persisted = await File.ReadAllTextAsync(path);
+        JsonSerializer.Deserialize(persisted, TestsJsonContext.Default.TestRecord)
+            .Should().Be(new TestRecord("id-1", 1, "migrated-legacy"));
+        persisted.Should().NotContain("LegacyValue");
 
-        using var scope = await ctx.Index.EnterSharedScopeAsync();
-        Assert.Single(scope.Records);
-        Assert.True(scope.Records.ContainsKey("id-new-longer"));
-        Assert.False(scope.Records.ContainsKey("id-old"));
-        Assert.Equal("id-new-longer", scope.Files["alpha.json"].Record.Id);
-        Assert.Equal("two", scope.Files["alpha.json"].Projection);
+        var state = fixture.Index.Records["id-1"].GetCurrentFileState();
+        state.SchemaVersion.Should().Be(1);
+        state.Fingerprint.Should().Be(new FileStore().GetFileFingerprint(path));
     }
 
     [Fact]
-    public async Task RequestFileReconcile_WhenFileHasLegacySchema_MigratesAndPersistsLatestVersion()
+    public async Task ReconcileAsync_LegacyDormantFile_DoesNotUpdateFile()
     {
-        await using var ctx = await ReconcilerTestContext.CreateAsync();
-        var filePath = await ctx.WriteLegacyRecordAsync("alpha.json", new("id-1", 0, "legacy"));
+        await using var fixture = await Fixture.CreateVersionedAsync();
+        var legacyPath = await fixture.WriteLegacyAsync("legacy.json", new LegacyTestRecord("id-1", 0, "legacy"));
+        var currentPath = await fixture.WriteAsync("current.json", new TestRecord("id-1", 1, "current"));
 
-        ctx.RequestFileReconcile(filePath);
-        await ctx.RetryScheduler.RunAllAsync();
-        AssertNoRetry(ctx);
+        await fixture.Reconciler.ReconcileAsync(currentPath, default);
+        var result = await fixture.Reconciler.ReconcileAsync(legacyPath, default);
 
-        using (var scope = await ctx.Index.EnterSharedScopeAsync())
+        result.Should().Be(RetryDecision.Complete);
+        fixture.Index.Records["id-1"].CurrentFileName.Should().Be("current.json");
+        fixture.Index.Records["id-1"].Files["legacy.json"].SchemaVersion.Should().Be(0);
+        (await File.ReadAllTextAsync(legacyPath)).Should().Contain("LegacyValue");
+    }
+
+    [Fact]
+    public async Task ReconcileAsync_TransientFormatUpdateWriteFailure_ReturnsRetryAndKeepsPhysicalVersion()
+    {
+        var scriptedStore = new ScriptedFileStore(new FileStore());
+        await using var fixture = await Fixture.CreateVersionedAsync(scriptedStore);
+        var path = await fixture.WriteLegacyAsync("record.json", new LegacyTestRecord("id-1", 0, "legacy"));
+        scriptedStore.EnqueueWriteResult(
+            path,
+            new FileWriteResult(
+                null,
+                new FileError(
+                    FileErrorReason.Unavailable,
+                    FileErrorPersistence.Transient,
+                    new IOException("transient write"))));
+
+        var firstResult = await fixture.Reconciler.ReconcileAsync(path, default);
+
+        firstResult.Should().Be(RetryDecision.RetryWithBackoff);
+        fixture.Index.Records["id-1"].GetCurrentFileState().SchemaVersion.Should().Be(0);
+        (await File.ReadAllTextAsync(path)).Should().Contain("LegacyValue");
+
+        var secondResult = await fixture.Reconciler.ReconcileAsync(path, default);
+
+        secondResult.Should().Be(RetryDecision.Complete);
+        fixture.Index.Records["id-1"].GetCurrentFileState().SchemaVersion.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task ReconcileAsync_CurrentVersionedFileWithMissingIndexedSchema_BackfillsSchemaVersion()
+    {
+        await using var fixture = await Fixture.CreateVersionedAsync();
+        var record = new TestRecord("id-1", 1, "current");
+        var path = await fixture.WriteAsync("record.json", record);
+        var fingerprint = new FileStore().GetFileFingerprint(path);
+        fixture.Engine.Upsert("id-1", "record.json", fingerprint, null, record)
+            .Should().Be(IndexOperationResult.Applied);
+        fixture.Index.Records["id-1"].GetCurrentFileState().SchemaVersion.Should().BeNull();
+
+        var result = await fixture.Reconciler.ReconcileAsync(path, default);
+
+        result.Should().Be(RetryDecision.Complete);
+        fixture.Index.Records["id-1"].GetCurrentFileState().SchemaVersion.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task ContinueAfterRead_WithHeldMatchingLock_UpdatesIndex()
+    {
+        await using var fixture = await Fixture.CreateUnversionedAsync();
+        var path = await fixture.WriteAsync("record.json", new TestRecord("id-1", 1, "first"));
+        await fixture.Reconciler.ReconcileAsync(path, default);
+
+        await fixture.WriteAsync("record.json", new TestRecord("ID-1", 1, "second"));
+        var readResult = await fixture.Store.ReadAsync(path, default);
+        using var sharedScope = await fixture.Index.EnterSharedScopeAsync();
+        using var recordScope = await sharedScope.LockRecordAsync("id-1");
+
+        var result = await fixture.Reconciler.ContinueAfterReadAsync(
+            path,
+            sharedScope,
+            recordScope,
+            readResult);
+
+        result.Should().Be(RetryDecision.Complete);
+        fixture.Index.Records["id-1"].GetCurrentFileState().Projection.Should().Be("second");
+    }
+
+    [Fact]
+    public async Task ContinueAfterRead_WithDifferentFileId_DeletesStaleIndexEntryAndRequestsRetry()
+    {
+        await using var fixture = await Fixture.CreateUnversionedAsync();
+        var path = await fixture.WriteAsync("record.json", new TestRecord("id-1", 1, "first"));
+        await fixture.Reconciler.ReconcileAsync(path, default);
+
+        await fixture.WriteAsync("record.json", new TestRecord("id-2", 1, "second"));
+        var readResult = await fixture.Store.ReadAsync(path, default);
+        using var sharedScope = await fixture.Index.EnterSharedScopeAsync();
+        using var recordScope = await sharedScope.LockRecordAsync("id-1");
+
+        var result = await fixture.Reconciler.ContinueAfterReadAsync(
+            path,
+            sharedScope,
+            recordScope,
+            readResult);
+
+        result.Should().Be(RetryDecision.RetryWithMinBackoff);
+        fixture.Index.Records.Should().NotContainKey("id-1");
+        fixture.Index.Records.Should().NotContainKey("id-2");
+    }
+
+    [Fact]
+    public async Task ContinueAfterRead_LegacyFile_UpdatesIndexAndRequestsRetry()
+    {
+        await using var fixture = await Fixture.CreateVersionedAsync();
+        var path = await fixture.WriteLegacyAsync("record.json", new LegacyTestRecord("id-1", 0, "legacy"));
+        var readResult = await fixture.Store.ReadAsync(path, default);
+        using var sharedScope = await fixture.Index.EnterSharedScopeAsync();
+        using var recordScope = await sharedScope.LockRecordAsync("id-1");
+
+        var result = await fixture.Reconciler.ContinueAfterReadAsync(path, sharedScope, recordScope, readResult);
+
+        result.Should().Be(RetryDecision.RetryWithMinBackoff);
+        fixture.Index.Records["id-1"].GetCurrentFileState().SchemaVersion.Should().Be(0);
+        (await File.ReadAllTextAsync(path)).Should().Contain("LegacyValue");
+    }
+
+    private static FileFingerprint ReplaceFile(
+        string path,
+        TestRecord record)
+    {
+        File.WriteAllText(path, JsonSerializer.Serialize(record, TestsJsonContext.Default.TestRecord));
+        return new FileStore().GetFileFingerprint(path);
+    }
+
+    private sealed class Fixture : IAsyncDisposable
+    {
+        private readonly string _rootPath;
+
+        private Fixture(
+            string rootPath,
+            string tablePath,
+            RecordScopedIndexEngine<string, TestRecord, string> engine,
+            TableIndex<string, TestRecord, string> index,
+            RecordStore<string, TestRecord> store,
+            FileReconciler<string, TestRecord, string> reconciler)
         {
-            var record = Assert.Single(scope.Records).Value;
-            Assert.Equal("id-1", record.Id);
-            Assert.Equal("alpha.json", record.CurrentFileName);
-            Assert.Equal("migrated-legacy", scope.Files["alpha.json"].Projection);
+            _rootPath = rootPath;
+            TablePath = tablePath;
+            Engine = engine;
+            Index = index;
+            Store = store;
+            Reconciler = reconciler;
         }
 
-        var persisted = await File.ReadAllTextAsync(filePath);
-        var persistedRecord = JsonSerializer.Deserialize(persisted, TestsJsonContext.Default.TestRecord);
-        Assert.Equal(new TestRecord("id-1", 1, "migrated-legacy"), persistedRecord);
-        Assert.DoesNotContain("LegacyValue", persisted, StringComparison.Ordinal);
-    }
+        public string TablePath { get; }
+        public RecordScopedIndexEngine<string, TestRecord, string> Engine { get; }
+        public TableIndex<string, TestRecord, string> Index { get; }
+        public RecordStore<string, TestRecord> Store { get; }
+        public FileReconciler<string, TestRecord, string> Reconciler { get; }
 
-    [Fact]
-    public async Task RequestFileReconcile_WhenFileIsLocked_EnqueuesRetry()
-    {
-        if (!OperatingSystem.IsWindows())
-            return;
-
-        await using var ctx = await ReconcilerTestContext.CreateAsync();
-        var filePath = await ctx.WriteRecordAsync("alpha.json", new("id-1", 1, "value"));
-
-        await using (var fileLock = new FileStream(filePath, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+        public static async Task<Fixture> CreateUnversionedAsync(IFileStore? fileStore = null)
         {
-            ctx.RequestFileReconcile(filePath);
-            var hadWork = await ctx.RetryScheduler.RunNextAsync();
-
-            Assert.True(hadWork);
-            Assert.Equal(1, ctx.RetryScheduler.PendingCount);
+            var policy = new DecoderPolicyBuilder()
+                .WithoutVersioning(TestsJsonContext.Default.TestRecord);
+            return await CreateAsync(policy, fileStore);
         }
 
-        await ctx.RetryScheduler.RunAllAsync();
-        AssertNoRetry(ctx);
-
-        using var scope = await ctx.Index.EnterSharedScopeAsync();
-        Assert.Single(scope.Records);
-        Assert.True(scope.Records.ContainsKey("id-1"));
-    }
-
-    [Fact]
-    public async Task RequestFileReconcile_WhenUpgradeWriteIsDeferred_RetriesAndPersistsUpgrade()
-    {
-        var scriptedStore = new ScriptedFileStore();
-        await using var ctx = await ReconcilerTestContext.CreateAsync(scriptedStore);
-        var filePath = await ctx.WriteLegacyRecordAsync("alpha.json", new("id-1", 0, "legacy"));
-        scriptedStore.EnqueueWriteResult(filePath, new FileWriteResult(
-            null,
-            new FileError(
-                FileErrorReason.Unavailable,
-                FileErrorPersistence.Transient,
-                new IOException("transient write"))));
-
-        ctx.RequestFileReconcile(filePath);
-        var hadWork = await ctx.RetryScheduler.RunNextAsync();
-
-        Assert.True(hadWork);
-        Assert.Equal(1, ctx.RetryScheduler.PendingCount);
-
-        using (var scope = await ctx.Index.EnterSharedScopeAsync())
+        public static async Task<Fixture> CreateVersionedAsync(IFileStore? fileStore = null)
         {
-            var record = Assert.Single(scope.Records).Value;
-            Assert.Equal("id-1", record.Id);
-            Assert.Equal("migrated-legacy", scope.Files["alpha.json"].Projection);
+            var policy = new DecoderPolicyBuilder()
+                .StartWith<LegacyTestRecord>(0)
+                .UpgradeTo(1, legacy => new TestRecord(legacy.Id, 1, $"migrated-{legacy.LegacyValue}"))
+                .Build();
+            return await CreateAsync(policy, fileStore);
         }
 
-        var persistedAfterDeferredWrite = await File.ReadAllTextAsync(filePath);
-        Assert.Contains("LegacyValue", persistedAfterDeferredWrite, StringComparison.Ordinal);
+        private static async Task<Fixture> CreateAsync(
+            DecoderPolicy<TestRecord> policy,
+            IFileStore? fileStore)
+        {
+            var rootPath = Directory.CreateTempSubdirectory().FullName;
+            var tablePath = Path.Combine(rootPath, "table");
+            var indexPath = Path.Combine(rootPath, "index.json");
+            Directory.CreateDirectory(tablePath);
 
-        await ctx.RetryScheduler.RunAllAsync();
-        AssertNoRetry(ctx);
+            var codec = new RecordCodec<string, TestRecord>(policy);
+            var context = TestTableContext.Create<string, TestRecord, string>(
+                static record => record.Value,
+                static record => [record.Id],
+                StringComparer.OrdinalIgnoreCase,
+                StringComparer.OrdinalIgnoreCase,
+                codec);
+            var persistence = TestTableContext.CreateJsonIndexPersistence(
+                TestsJsonContext.Default.String,
+                TestsJsonContext.Default.String,
+                StringComparer.OrdinalIgnoreCase);
+            var engine = await RecordScopedIndexEngine<string, TestRecord, string>.StartAsync(
+                indexPath,
+                context,
+                persistence,
+                autoSaveEnabled: false);
+            var index = new TableIndex<string, TestRecord, string>(engine, context);
+            var effectiveFileStore = fileStore ?? new FileStore();
+            var store = new RecordStore<string, TestRecord>(codec, effectiveFileStore);
+            var reconciler = new FileReconciler<string, TestRecord, string>(
+                context,
+                effectiveFileStore,
+                store,
+                index,
+                NullLogger<FileReconciler<string, TestRecord, string>>.Instance);
 
-        var persisted = await File.ReadAllTextAsync(filePath);
-        var persistedRecord = JsonSerializer.Deserialize(persisted, TestsJsonContext.Default.TestRecord);
-        Assert.Equal(new TestRecord("id-1", 1, "migrated-legacy"), persistedRecord);
-        Assert.DoesNotContain("LegacyValue", persisted, StringComparison.Ordinal);
+            return new(rootPath, tablePath, engine, index, store, reconciler);
+        }
+
+        public async Task<string> WriteAsync(string fileName, TestRecord record)
+        {
+            var path = Path.Combine(TablePath, fileName);
+            await File.WriteAllTextAsync(
+                path,
+                JsonSerializer.Serialize(record, TestsJsonContext.Default.TestRecord));
+            return path;
+        }
+
+        public async Task<string> WriteLegacyAsync(string fileName, LegacyTestRecord record)
+        {
+            var path = Path.Combine(TablePath, fileName);
+            await File.WriteAllTextAsync(path, JsonSerializer.Serialize(record));
+            return path;
+        }
+
+        public async ValueTask DisposeAsync()
+        {
+            await Index.DisposeAsync();
+            try
+            {
+                Directory.Delete(_rootPath, recursive: true);
+            }
+            catch
+            {
+            }
+        }
     }
-
-    private static void AssertNoRetry(ReconcilerTestContext ctx) => Assert.Equal(0, ctx.RetryScheduler.PendingCount);
 }

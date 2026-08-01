@@ -417,7 +417,8 @@ public class DatabaseOperationProcessorTests
                 context,
                 fileStore,
                 store,
-                index);
+                index,
+                NullLogger<FileReconciler<string, TestRecord, string>>.Instance);
             var fileProcessor = new FileOperationProcessor<string, TestRecord, string>(
                 tablePath,
                 context,

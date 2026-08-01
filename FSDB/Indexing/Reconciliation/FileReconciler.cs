@@ -66,11 +66,11 @@ internal class FileReconciler<TKey, TRecord, TProjection>(
         {
             logger.LogError(
                 ex,
-                "File reconciliation failed, will retry: file=\"{File}\" durationMs={DurationMs}",
+                "Reconciliation failed, skipped: file=\"{File}\" durationMs={DurationMs}",
                 fileName,
                 stopwatch.ElapsedMilliseconds);
 
-            return RetryDecision.RetryWithBackoff;
+            return RetryDecision.Complete;
         }
     }
 
@@ -106,11 +106,11 @@ internal class FileReconciler<TKey, TRecord, TProjection>(
         {
             logger.LogError(
                 ex,
-                "Partial file reconciliation failed, will retry: file=\"{File}\" durationMs={DurationMs}",
+                "Reconciliation failed, skipped: file=\"{File}\" durationMs={DurationMs}",
                 fileName,
                 stopwatch.ElapsedMilliseconds);
 
-            return RetryDecision.RetryWithBackoff;
+            return RetryDecision.Complete;
         }
     }
 
