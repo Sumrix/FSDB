@@ -1,6 +1,6 @@
 namespace FSDB.Indexing.Reconciliation;
 
-public enum IndexDecisionExecutionResult
+internal enum IndexDecisionExecutionResult
 {
     Applied,
     IdLockMismatch

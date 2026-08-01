@@ -8,7 +8,7 @@ using FSDB.Indexing.State;
 
 namespace FSDB.Indexing.Reconciliation;
 
-public class FileUpdateDecisionExecutor<TKey, TRecord, TProjection>(
+internal class FileUpdateDecisionExecutor<TKey, TRecord, TProjection>(
     RecordStore<TKey, TRecord> recordStore)
     where TKey : notnull
 {

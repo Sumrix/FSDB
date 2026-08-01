@@ -40,6 +40,11 @@ public readonly struct Option<T>
         return HasValue ? Value! : defaultValue;
     }
 
+    public object? ToObject()
+    {
+        return HasValue ? Value : null;
+    }
+
     public Option<U> Map<U>(Func<T, U> selector)
     {
         return HasValue ? Option<U>.Some(selector(Value!)) : Option<U>.None;

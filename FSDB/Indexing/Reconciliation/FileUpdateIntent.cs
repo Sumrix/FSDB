@@ -1,6 +1,6 @@
 namespace FSDB.Indexing.Reconciliation;
 
-public enum FileUpdateIntent
+internal enum FileUpdateIntent
 {
     DoNothing,
     ReadFile,

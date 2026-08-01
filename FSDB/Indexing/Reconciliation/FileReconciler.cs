@@ -15,47 +15,48 @@ using FSDB.Model;
 using FSDB.Retry;
 using FSDB.Runtime;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Logging.Abstractions;
 
 namespace FSDB.Indexing.Reconciliation;
 
-public class FileReconciler<TKey, TRecord, TProjection>(
+internal class FileReconciler<TKey, TRecord, TProjection>(
     TableContext<TKey, TRecord, TProjection> context,
     IFileStore fileStore,
     RecordStore<TKey, TRecord> recordStore,
     TableIndex<TKey, TRecord, TProjection> index,
-    ILogger<FileReconciler<TKey, TRecord, TProjection>>? logger = null)
+    ILogger<FileReconciler<TKey, TRecord, TProjection>> logger)
     where TKey : notnull
     where TRecord : class, IRecord<TKey>
 {
-    private readonly IndexDecisionMaker<TKey, TRecord, TProjection> _indexDecisionMaker = new(context.KeyEqualityComparer);
+    private readonly IndexDecisionMaker<TKey, TRecord, TProjection> _indexDecisionMaker =
+        new(context.KeyEqualityComparer);
+
     private readonly FileUpdateDecisionMaker<TKey, TRecord, TProjection>? _fileUpdateDecisionMaker =
         context.RecordCodec.CurrentSchemaVersion is { } currentSchemaVersion
             ? new(currentSchemaVersion)
             : null;
+
     private static readonly IndexDecisionExecutor<TKey, TRecord, TProjection> _indexDecisionExecutor = new();
-    private readonly FileUpdateDecisionExecutor<TKey, TRecord, TProjection> _fileUpdateDecisionExecutor = new(recordStore);
+
+    private readonly FileUpdateDecisionExecutor<TKey, TRecord, TProjection> _fileUpdateDecisionExecutor =
+        new(recordStore);
+
     private static readonly RetryDecisionMaker _retryDecisionMaker = new();
-    private readonly ILogger<FileReconciler<TKey, TRecord, TProjection>> _logger =
-        logger ?? NullLogger<FileReconciler<TKey, TRecord, TProjection>>.Instance;
 
     public async Task<RetryDecision> ReconcileAsync(string path, CancellationToken ct)
     {
-        using var _ = _logger.BeginMethodScope();
+        using var _ = logger.BeginMethodScope();
         var stopwatch = Stopwatch.StartNew();
         var fileName = Path.GetFileName(path);
 
+        logger.LogDebug("Started: file=\"{File}\"", fileName);
+
         try
         {
-            var decision = await ReconcileCoreAsync(path, ct);
+            var outcome = await ReconcileCoreAsync(path, ct);
 
-            _logger.LogDebug(
-                "File reconciliation finished: file=\"{File}\" retryDecision={RetryDecision} durationMs={DurationMs}",
-                fileName,
-                decision,
-                stopwatch.ElapsedMilliseconds);
+            LogOutcome(outcome, fileName, stopwatch.ElapsedMilliseconds);
 
-            return decision;
+            return outcome.Retry;
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -63,7 +64,7 @@ public class FileReconciler<TKey, TRecord, TProjection>(
         }
         catch (Exception ex)
         {
-            _logger.LogError(
+            logger.LogError(
                 ex,
                 "File reconciliation failed, will retry: file=\"{File}\" durationMs={DurationMs}",
                 fileName,
@@ -80,19 +81,22 @@ public class FileReconciler<TKey, TRecord, TProjection>(
         FileReadResult<RecordDecodeResult<TRecord>> readResult,
         CancellationToken ct = default)
     {
-        using var _ = _logger.BeginMethodScope();
+        using var _ = logger.BeginMethodScope();
+        var stopwatch = Stopwatch.StartNew();
         var fileName = Path.GetFileName(path);
+
+        logger.LogDebug(
+            "Started: file=\"{File}\" heldId={HeldId}",
+            fileName,
+            heldScope.Id);
 
         try
         {
-            var decision = await ContinueAfterReadCoreAsync(path, sharedIndexScope, heldScope, readResult, ct);
+            var outcome = await ContinueAfterReadCoreAsync(path, sharedIndexScope, heldScope, readResult, ct);
 
-            _logger.LogDebug(
-                "Partial file reconciliation finished: file=\"{File}\" retryDecision={RetryDecision}",
-                fileName,
-                decision);
+            LogOutcome(outcome, fileName, stopwatch.ElapsedMilliseconds);
 
-            return decision;
+            return outcome.Retry;
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -100,27 +104,43 @@ public class FileReconciler<TKey, TRecord, TProjection>(
         }
         catch (Exception ex)
         {
-            _logger.LogError(
+            logger.LogError(
                 ex,
-                "Partial file reconciliation failed, will retry: file=\"{File}\"",
-                fileName);
+                "Partial file reconciliation failed, will retry: file=\"{File}\" durationMs={DurationMs}",
+                fileName,
+                stopwatch.ElapsedMilliseconds);
 
             return RetryDecision.RetryWithBackoff;
         }
     }
 
-    private async Task<RetryDecision> ReconcileCoreAsync(string path, CancellationToken ct)
+    private async Task<ReconciliationOutcome> ReconcileCoreAsync(string path, CancellationToken ct)
     {
         using var sharedIndexScope = await index.EnterSharedScopeAsync(ct);
 
         var firstPass = await DecideAsync(path, sharedIndexScope, null, ct);
         if (firstPass.IsComplete)
         {
-            return _retryDecisionMaker.MakeDecision(firstPass.ReadResult.Error, idLockMismatch: false);
+            return CreateOutcome(firstPass);
         }
 
-        var (indexedId, diskId) = GetRequiredIdLocks(firstPass.IndexedState, firstPass.ReadResult);
-        using var scopes = await sharedIndexScope.LockRecordsAsync(indexedId, diskId, ct);
+        var fileName = Path.GetFileName(path);
+
+        logger.LogTrace(
+            "Acquiring locks: file=\"{File}\" indexedId={IndexedId} diskId={DiskId}",
+            fileName,
+            firstPass.IndexedId.ToObject(),
+            firstPass.DiskId.ToObject());
+
+        var lockWaitStart = Stopwatch.GetTimestamp();
+        using var scopes = await sharedIndexScope.LockRecordsAsync(firstPass.IndexedId, firstPass.DiskId, ct);
+
+        logger.LogTrace(
+            "Locks acquired: file=\"{File}\" indexedId={IndexedId} diskId={DiskId} waitMs={WaitMs}",
+            fileName,
+            firstPass.IndexedId.ToObject(),
+            firstPass.DiskId.ToObject(),
+            Math.Round(Stopwatch.GetElapsedTime(lockWaitStart).TotalMilliseconds, 3));
 
         var secondPass = await DecideAsync(path, sharedIndexScope, firstPass.ReadResult, ct);
         return await ExecutePassAsync(
@@ -132,7 +152,7 @@ public class FileReconciler<TKey, TRecord, TProjection>(
             ct);
     }
 
-    private Task<RetryDecision> ContinueAfterReadCoreAsync(
+    private Task<ReconciliationOutcome> ContinueAfterReadCoreAsync(
         string path,
         SharedIndexScope<TKey, TRecord, TProjection> sharedIndexScope,
         RecordScope<TKey, TRecord, TProjection> heldScope,
@@ -141,6 +161,9 @@ public class FileReconciler<TKey, TRecord, TProjection>(
     {
         var fileName = Path.GetFileName(path);
         var indexedState = sharedIndexScope.Files.GetValueOrDefault(fileName);
+
+        LogObservedState(readResult.Fingerprint, indexedState, fileName);
+
         var indexDecision = _indexDecisionMaker.MakePostReadDecision(readResult, indexedState);
         var fileUpdateIntent = _fileUpdateDecisionMaker?.MakePostReadIntent(readResult);
         var pass = new DecisionPass(
@@ -159,7 +182,7 @@ public class FileReconciler<TKey, TRecord, TProjection>(
             ct);
     }
 
-    private async Task<RetryDecision> ExecutePassAsync(
+    private async Task<ReconciliationOutcome> ExecutePassAsync(
         string path,
         DecisionPass pass,
         RecordScope<TKey, TRecord, TProjection>? firstScope,
@@ -167,9 +190,11 @@ public class FileReconciler<TKey, TRecord, TProjection>(
         bool executeFileUpdateDecision,
         CancellationToken ct)
     {
+        var fileName = Path.GetFileName(path);
+
         if (pass.IsComplete)
         {
-            return _retryDecisionMaker.MakeDecision(pass.ReadResult.Error, idLockMismatch: false);
+            return CreateOutcome(pass);
         }
 
         if (pass.IndexDecision.RequiresRead)
@@ -182,16 +207,14 @@ public class FileReconciler<TKey, TRecord, TProjection>(
             throw new InvalidOperationException("A file update read intent cannot reach execution.");
         }
 
-        var (indexedId, diskId) = GetRequiredIdLocks(pass.IndexedState, pass.ReadResult);
-        var indexedIdScope = GetScope(firstScope, secondScope, indexedId);
-        var diskIdScope = GetScope(firstScope, secondScope, diskId);
-        var fileName = Path.GetFileName(path);
+        var indexedIdScope = GetScope(firstScope, secondScope, pass.IndexedId);
+        var diskIdScope = GetScope(firstScope, secondScope, pass.DiskId);
 
         // Execute the indexed id part of the index reconciliation decision
         var indexedIdPart = pass.IndexDecision.IndexedIdPart;
         if (indexedIdPart != IndexMutation.None && indexedIdScope is null)
         {
-            return _retryDecisionMaker.MakeDecision(pass.ReadResult.Error, idLockMismatch: true);
+            return CreateOutcome(pass, idLockMismatch: true);
         }
 
         _indexDecisionExecutor.Execute(
@@ -208,7 +231,7 @@ public class FileReconciler<TKey, TRecord, TProjection>(
             pass.FileUpdateIntent == FileUpdateIntent.UpdateIfCurrentFile;
         if (diskIdLockRequired && diskIdScope is null)
         {
-            return _retryDecisionMaker.MakeDecision(pass.ReadResult.Error, idLockMismatch: true);
+            return CreateOutcome(pass, idLockMismatch: true);
         }
 
         var diskIdResult = _indexDecisionExecutor.Execute(
@@ -219,13 +242,13 @@ public class FileReconciler<TKey, TRecord, TProjection>(
             diskIdScope);
         if (diskIdResult == IndexDecisionExecutionResult.IdLockMismatch)
         {
-            return _retryDecisionMaker.MakeDecision(pass.ReadResult.Error, idLockMismatch: true);
+            return CreateOutcome(pass, idLockMismatch: true);
         }
 
         // Resolve FileUpdateIntent against the recalculated CurrentFileName and update the file
         if (pass.FileUpdateIntent is null or FileUpdateIntent.DoNothing)
         {
-            return _retryDecisionMaker.MakeDecision(pass.ReadResult.Error, idLockMismatch: false);
+            return CreateOutcome(pass);
         }
 
         var currentFile = diskIdScope!.TryGetState(out var recordState) &&
@@ -233,12 +256,12 @@ public class FileReconciler<TKey, TRecord, TProjection>(
         var fileUpdateDecision = _fileUpdateDecisionMaker!.MakeDecision(pass.FileUpdateIntent.Value, currentFile);
         if (fileUpdateDecision == FileUpdateDecision.DoNothing)
         {
-            return _retryDecisionMaker.MakeDecision(pass.ReadResult.Error, idLockMismatch: false);
+            return CreateOutcome(pass, fileUpdate: fileUpdateDecision);
         }
 
         if (!executeFileUpdateDecision)
         {
-            return RetryDecision.RetryWithMinBackoff;
+            return new(pass, RetryDecision.RetryWithMinBackoff, fileUpdateDecision);
         }
 
         var writeError = await _fileUpdateDecisionExecutor.ExecuteAsync(
@@ -249,19 +272,24 @@ public class FileReconciler<TKey, TRecord, TProjection>(
             diskIdScope,
             ct);
 
-        if (writeError is not null)
+        if (writeError is null)
         {
-            _logger.LogWarning(
-                "File format update failed: file=\"{File}\" id={Id} fromSchemaVersion={FromSchemaVersion} toSchemaVersion={ToSchemaVersion} errorReason={ErrorReason} errorPersistence={ErrorPersistence}",
+            logger.LogDebug(
+                "File updated: file=\"{File}\" sourceSchemaVersion={SourceSchemaVersion} targetSchemaVersion={TargetSchemaVersion}",
                 fileName,
-                pass.ReadResult.Value.Record.Id,
                 pass.ReadResult.Value.SourceSchemaVersion,
-                pass.ReadResult.Value.TargetSchemaVersion,
+                pass.ReadResult.Value.TargetSchemaVersion);
+        }
+        else
+        {
+            logger.LogWarning(
+                "File update failed: file=\"{File}\" errorReason={ErrorReason} errorPersistence={ErrorPersistence}",
+                fileName,
                 writeError.Reason,
                 writeError.Persistence);
         }
 
-        return _retryDecisionMaker.MakeDecision(writeError, idLockMismatch: false);
+        return CreateOutcome(pass, fileUpdate: fileUpdateDecision, writeError: writeError);
     }
 
     private async Task<DecisionPass> DecideAsync(
@@ -274,49 +302,99 @@ public class FileReconciler<TKey, TRecord, TProjection>(
         var fingerprint = fileStore.GetFileFingerprint(path);
         var indexedState = sharedIndexScope.Files.GetValueOrDefault(fileName);
 
+        LogObservedState(fingerprint, indexedState, fileName);
+
         var indexDecision = _indexDecisionMaker.MakePreReadDecision(fingerprint, indexedState);
         var fileUpdateIntent = _fileUpdateDecisionMaker?.MakePreReadIntent(fileName, fingerprint, indexedState);
 
-        if (indexDecision.RequiresRead ||
-            fileUpdateIntent == FileUpdateIntent.ReadFile)
-        {
-            var readResult = await ReadFile(path, readCache, fingerprint, ct);
-
-            indexDecision = _indexDecisionMaker.MakePostReadDecision(readResult, indexedState);
-            fileUpdateIntent = _fileUpdateDecisionMaker?.MakePostReadIntent(readResult);
-            return new(indexDecision, fileUpdateIntent, readResult.Fingerprint, readResult, indexedState);
-        }
-        else
+        if (!indexDecision.RequiresRead && fileUpdateIntent != FileUpdateIntent.ReadFile)
         {
             return new(indexDecision, fileUpdateIntent, fingerprint, readCache ?? default, indexedState);
         }
+
+        var readResult = await ReadFile(path, readCache, fingerprint, fileName, ct);
+
+        indexDecision = _indexDecisionMaker.MakePostReadDecision(readResult, indexedState);
+        fileUpdateIntent = _fileUpdateDecisionMaker?.MakePostReadIntent(readResult);
+
+        return new(indexDecision, fileUpdateIntent, readResult.Fingerprint, readResult, indexedState);
     }
 
     private async Task<FileReadResult<RecordDecodeResult<TRecord>>> ReadFile(
         string path,
         FileReadResult<RecordDecodeResult<TRecord>>? readCache,
         FileFingerprint fingerprint,
+        string fileName,
         CancellationToken ct)
     {
-        return readCache is not null &&
-               readCache.Value.Fingerprint == fingerprint
-            ? readCache.Value
-            : await recordStore.ReadAsync(path, ct);
+        if (readCache is not null &&
+            readCache.Value.Fingerprint == fingerprint)
+        {
+            return readCache.Value;
+        }
+
+        var readResult = await recordStore.ReadAsync(path, ct);
+
+        LogReadResult(readResult, fileName);
+
+        return readResult;
     }
-    
-    private static (Option<TKey> IndexedId, Option<TKey> DiskId) GetRequiredIdLocks(
+
+    private void LogObservedState(
+        FileFingerprint fingerprint,
         IReadOnlyFileIndexState<TKey, TProjection>? indexedState,
-        FileReadResult<RecordDecodeResult<TRecord>> readResult)
+        string fileName)
     {
-        var indexedId = indexedState != null
-            ? Option<TKey>.Some(indexedState.Record.Id)
-            : Option<TKey>.None;
+        logger.LogTrace(
+            "Observed: file=\"{File}\" fingerprint=\"{Fingerprint}\" indexedId={IndexedId} indexedFingerprint=\"{IndexedFingerprint}\" indexedStatus={IndexedStatus} indexedSchemaVersion={IndexedSchemaVersion} indexedErrorReason={IndexedErrorReason}",
+            fileName,
+            fingerprint,
+            indexedState is not null ? indexedState.Record.Id : null,
+            indexedState?.Fingerprint,
+            indexedState?.Status,
+            indexedState?.SchemaVersion,
+            indexedState?.ErrorInfo?.Reason);
+    }
 
-        var diskId = readResult.IsSuccess
-            ? Option<TKey>.Some(readResult.Value.Record.Id)
-            : Option<TKey>.None;
+    private void LogReadResult(FileReadResult<RecordDecodeResult<TRecord>> readResult, string fileName)
+    {
+        logger.LogTrace(
+            "File read: file=\"{File}\" fingerprint=\"{Fingerprint}\" diskId={DiskId} sourceSchemaVersion={SourceSchemaVersion} targetSchemaVersion={TargetSchemaVersion} errorReason={ErrorReason} errorPersistence={ErrorPersistence}",
+            fileName,
+            readResult.Fingerprint,
+            readResult.IsSuccess ? readResult.Value.Record.Id : null,
+            readResult.IsSuccess ? readResult.Value.SourceSchemaVersion : null,
+            readResult.IsSuccess ? readResult.Value.TargetSchemaVersion : null,
+            readResult.Error?.Reason,
+            readResult.Error?.Persistence);
+    }
 
-        return (indexedId, diskId);
+    private static ReconciliationOutcome CreateOutcome(
+        DecisionPass pass,
+        bool idLockMismatch = false,
+        FileUpdateDecision? fileUpdate = null,
+        FileError? writeError = null)
+    {
+        return new(
+            pass,
+            _retryDecisionMaker.MakeDecision(writeError ?? pass.ReadResult.Error, idLockMismatch),
+            fileUpdate,
+            idLockMismatch);
+    }
+
+    private void LogOutcome(ReconciliationOutcome outcome, string fileName, long durationMs)
+    {
+        logger.LogDebug(
+            "Finished: file=\"{File}\" indexedId={IndexedId} diskId={DiskId} fingerprint=\"{Fingerprint}\" indexReconciliation={Decision} fileUpdate={FileUpdate} retry={RetryDecision} idLockMismatch={IdLockMismatch} durationMs={DurationMs}",
+            fileName,
+            outcome.IndexedId.ToObject(),
+            outcome.DiskId.ToObject(),
+            outcome.Fingerprint,
+            outcome.Decision,
+            outcome.FileUpdate ?? FileUpdateDecision.DoNothing,
+            outcome.Retry,
+            outcome.IdLockMismatch,
+            durationMs);
     }
 
     private RecordScope<TKey, TRecord, TProjection>? GetScope(
@@ -339,15 +417,38 @@ public class FileReconciler<TKey, TRecord, TProjection>(
             : null;
     }
 
-    private readonly record struct DecisionPass(
+    private record DecisionPass(
         FileReconciliationDecision IndexDecision,
         FileUpdateIntent? FileUpdateIntent,
         FileFingerprint Fingerprint,
         FileReadResult<RecordDecodeResult<TRecord>> ReadResult,
         IReadOnlyFileIndexState<TKey, TProjection>? IndexedState)
     {
+        public Option<TKey> IndexedId { get; } = IndexedState is not null
+            ? Option<TKey>.Some(IndexedState.Record.Id)
+            : Option<TKey>.None;
+
+        public Option<TKey> DiskId { get; } = ReadResult.IsSuccess
+            ? Option<TKey>.Some(ReadResult.Value.Record.Id)
+            : Option<TKey>.None;
+
         public bool IsComplete =>
             IndexDecision == FileReconciliationDecision.Skip &&
             FileUpdateIntent is null or FSDB.Indexing.Reconciliation.FileUpdateIntent.DoNothing;
+    }
+
+    private class ReconciliationOutcome(
+        DecisionPass pass,
+        RetryDecision retryDecision,
+        FileUpdateDecision? fileUpdate = null,
+        bool idLockMismatch = false)
+    {
+        public RetryDecision Retry => retryDecision;
+        public Option<TKey> IndexedId => pass.IndexedId;
+        public Option<TKey> DiskId => pass.DiskId;
+        public FileFingerprint Fingerprint => pass.Fingerprint;
+        public FileReconciliationDecision Decision => pass.IndexDecision;
+        public FileUpdateDecision? FileUpdate => fileUpdate;
+        public bool IdLockMismatch => idLockMismatch;
     }
 }

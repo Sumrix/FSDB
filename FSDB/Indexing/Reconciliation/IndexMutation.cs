@@ -1,6 +1,6 @@
 namespace FSDB.Indexing.Reconciliation;
 
-public enum IndexMutation : byte
+internal enum IndexMutation : byte
 {
     None,
     Delete,

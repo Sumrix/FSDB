@@ -1,6 +1,6 @@
 namespace FSDB.Indexing.Reconciliation;
 
-public readonly record struct FileReconciliationDecision
+internal readonly record struct FileReconciliationDecision
 {
     private FileReconciliationDecision(
         IndexMutation indexedIdPart,
@@ -36,4 +36,20 @@ public readonly record struct FileReconciliationDecision
     public IndexMutation DiskIdPart { get; }
 
     public bool RequiresRead { get; }
+
+    public override string ToString()
+    {
+        if (RequiresRead)
+        {
+            return nameof(ReadFile);
+        }
+
+        return (IndexedIdPart, DiskIdPart) switch
+        {
+            (IndexMutation.None, IndexMutation.None) => nameof(Skip),
+            (IndexMutation.None, var diskIdPart) => diskIdPart.ToString(),
+            (var indexedIdPart, IndexMutation.None) => indexedIdPart.ToString(),
+            var (indexedIdPart, diskIdPart) => $"{indexedIdPart}Then{diskIdPart}"
+        };
+    }
 }

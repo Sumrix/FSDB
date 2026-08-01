@@ -3,7 +3,7 @@ using FSDB.Retry;
 
 namespace FSDB.Indexing.Reconciliation;
 
-public class RetryDecisionMaker
+internal class RetryDecisionMaker
 {
     public RetryDecision MakeDecision(FileError? latestFileError, bool idLockMismatch)
     {

@@ -6,7 +6,7 @@ using FSDB.Indexing.State;
 
 namespace FSDB.Indexing.Reconciliation;
 
-public class IndexDecisionExecutor<TKey, TRecord, TProjection>
+internal class IndexDecisionExecutor<TKey, TRecord, TProjection>
     where TKey : notnull
 {
     public IndexDecisionExecutionResult Execute(

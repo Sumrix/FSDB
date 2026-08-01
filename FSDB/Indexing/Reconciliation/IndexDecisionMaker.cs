@@ -7,7 +7,7 @@ using FSDB.Model;
 
 namespace FSDB.Indexing.Reconciliation;
 
-public class IndexDecisionMaker<TKey, TRecord, TProjection>
+internal class IndexDecisionMaker<TKey, TRecord, TProjection>
     where TRecord : IRecord<TKey>
 {
     private readonly IEqualityComparer<TKey> _keyEqualityComparer;

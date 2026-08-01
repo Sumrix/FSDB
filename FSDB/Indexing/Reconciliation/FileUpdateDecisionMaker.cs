@@ -7,7 +7,7 @@ using FSDB.Model;
 
 namespace FSDB.Indexing.Reconciliation;
 
-public class FileUpdateDecisionMaker<TKey, TRecord, TProjection>(int currentSchemaVersion)
+internal class FileUpdateDecisionMaker<TKey, TRecord, TProjection>(int currentSchemaVersion)
     where TRecord : IRecord<TKey>
 {
     public FileUpdateIntent MakePreReadIntent(

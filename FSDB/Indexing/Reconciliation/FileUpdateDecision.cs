@@ -1,6 +1,6 @@
 namespace FSDB.Indexing.Reconciliation;
 
-public enum FileUpdateDecision
+internal enum FileUpdateDecision
 {
     DoNothing,
     UpdateFile
