@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using FSDB.Encoding;
 using FSDB.FileStorage;
 using FSDB.Indexing.State;
-using FSDB.Model;
 
 namespace FSDB.Indexing.Reconciliation;
 

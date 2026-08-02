@@ -9,7 +9,6 @@ using FSDB.Indexing;
 using FSDB.Indexing.Reconciliation;
 using FSDB.Infrastructure.Helpers;
 using FSDB.Infrastructure.Logging;
-using FSDB.Model;
 using FSDB.Retry;
 using Microsoft.Extensions.Logging;
 

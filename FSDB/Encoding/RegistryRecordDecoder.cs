@@ -1,7 +1,6 @@
 using System.Collections.Generic;
 using System.Text.Json;
 using FSDB.Infrastructure.Exceptions;
-using FSDB.Model;
 
 namespace FSDB.Encoding;
 

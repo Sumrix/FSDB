@@ -4,7 +4,6 @@ using System.Threading;
 using System.Threading.Tasks;
 using FSDB.Encoding;
 using FSDB.Infrastructure.Exceptions;
-using FSDB.Model;
 using FSDB.Tests.TestSupport;
 
 namespace FSDB.Tests;

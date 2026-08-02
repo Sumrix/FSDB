@@ -1,6 +1,5 @@
 using System;
 using FSDB.Infrastructure.Exceptions;
-using FSDB.Model;
 
 namespace FSDB.Encoding;
 

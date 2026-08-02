@@ -11,7 +11,6 @@ using FSDB.Indexing.Scopes;
 using FSDB.Indexing.State;
 using FSDB.Infrastructure.Exceptions;
 using FSDB.Infrastructure.Logging;
-using FSDB.Model;
 using FSDB.Retry;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;

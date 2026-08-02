@@ -6,7 +6,6 @@ using FSDB.Encoding;
 using FSDB.FileStorage;
 using FSDB.Indexing;
 using FSDB.Indexing.Reconciliation;
-using FSDB.Model;
 using FSDB.Runtime;
 using Microsoft.Extensions.Logging.Abstractions;
 

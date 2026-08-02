@@ -12,8 +12,7 @@ using FSDB.Infrastructure.Collections;
 using FSDB.Infrastructure.Helpers;
 using FSDB.Infrastructure.Logging;
 using FSDB.Infrastructure.Watching;
-using FSDB.Model;
-using FSDB.Model.Building;
+using FSDB.Building;
 using FSDB.Retry;
 using Microsoft.Extensions.Logging;
 

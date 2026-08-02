@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using System.Text.Json.Serialization.Metadata;
 using FSDB.Encoding;
 using FSDB.Indexing.Persistence;
-using FSDB.Model;
 using FSDB.Runtime;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;

@@ -11,7 +11,6 @@ using FSDB.Indexing.State;
 using FSDB.Infrastructure.Helpers;
 using FSDB.Infrastructure.Logging;
 using FSDB.Infrastructure.Primitives;
-using FSDB.Model;
 using FSDB.Retry;
 using FSDB.Runtime;
 using Microsoft.Extensions.Logging;

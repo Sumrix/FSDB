@@ -3,7 +3,6 @@ using FSDB.Encoding;
 using FSDB.FileStorage;
 using FSDB.Indexing.State;
 using FSDB.Infrastructure.Helpers;
-using FSDB.Model;
 
 namespace FSDB.Indexing.Reconciliation;
 

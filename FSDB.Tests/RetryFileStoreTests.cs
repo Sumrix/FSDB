@@ -3,7 +3,6 @@ using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using FSDB.FileStorage;
-using FSDB.Model;
 
 namespace FSDB.Tests;
 

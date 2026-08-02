@@ -10,7 +10,6 @@ using FSDB.FileStorage;
 using FSDB.Indexing;
 using FSDB.Indexing.Persistence;
 using FSDB.Indexing.State;
-using FSDB.Model;
 using FSDB.Runtime;
 using FSDB.Tests.TestSupport;
 

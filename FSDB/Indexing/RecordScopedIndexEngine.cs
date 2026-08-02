@@ -8,7 +8,6 @@ using FSDB.Indexing.State;
 using FSDB.Infrastructure.Collections;
 using FSDB.Infrastructure.Concurrency;
 using FSDB.Infrastructure.Logging;
-using FSDB.Model;
 using FSDB.Runtime;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
