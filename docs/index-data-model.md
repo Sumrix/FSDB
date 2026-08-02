@@ -63,7 +63,7 @@ Every other file with the same id is dormant. A dormant file must not be updated
 
 A fingerprint is a cheap file-metadata snapshot — file size and `LastWriteTimeUtc` — used to detect whether a file may have changed without reading its contents. `GetFingerprint` reads only this metadata, so it is expected to be much faster than reading and decoding the file.
 
-FSDB relies on the file system and runtime reliably exposing size and `LastWriteTimeUtc` changes for every kind of edit it needs to observe. An environment that cannot guarantee this is not a good fit for FSDB.
+FolderDB relies on the file system and runtime reliably exposing size and `LastWriteTimeUtc` changes for every kind of edit it needs to observe. An environment that cannot guarantee this is not a good fit for FolderDB.
 
 ## SchemaVersion and CurrentSchemaVersion
 
