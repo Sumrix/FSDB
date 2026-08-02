@@ -25,7 +25,7 @@ using FolderDB;
 
 var users = TableDefinitionBuilder.CreateDefault<string, User>();
 
-await using var db = await FileSystemDatabase.StartAsync(
+await using var db = await FolderDatabase.StartAsync(
     rootPath: "data",
     tableDefinitions: [users]);
 

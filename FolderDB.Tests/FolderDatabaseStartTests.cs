@@ -8,7 +8,7 @@ using FolderDB.Retry;
 
 namespace FolderDB.Tests;
 
-public sealed class FileSystemDatabaseStartTests
+public sealed class FolderDatabaseStartTests
 {
     [Fact]
     public async Task StartAsync_WithoutOptions_UsesDefaultServices()
@@ -17,7 +17,7 @@ public sealed class FileSystemDatabaseStartTests
 
         try
         {
-            await using var db = await FileSystemDatabase.StartAsync(rootPath, [CreateTableDefinition()]);
+            await using var db = await FolderDatabase.StartAsync(rootPath, [CreateTableDefinition()]);
             var table = db.IndexedTable<string, PlainTestRecord, NoProjection>();
 
             await table.UpsertAsync(new PlainTestRecord("id-1", "value-1"));
@@ -38,7 +38,7 @@ public sealed class FileSystemDatabaseStartTests
 
         try
         {
-            await using var db = await FileSystemDatabase.StartAsync(rootPath, [CreateTableDefinition()]);
+            await using var db = await FolderDatabase.StartAsync(rootPath, [CreateTableDefinition()]);
             var table = db.IndexedFileTable<string, PlainTestRecord, NoProjection>();
 
             await table.WriteAsync(new PlainTestRecord("id-1", "value-1"));
@@ -66,7 +66,7 @@ public sealed class FileSystemDatabaseStartTests
                 RetrySchedulerFactory = _ => retryScheduler = new TrackingRetryScheduler()
             };
 
-            await using (await FileSystemDatabase.StartAsync(rootPath, [CreateTableDefinition()], options))
+            await using (await FolderDatabase.StartAsync(rootPath, [CreateTableDefinition()], options))
             {
             }
 
@@ -93,7 +93,7 @@ public sealed class FileSystemDatabaseStartTests
                 FileStoreFactory = () => fileStore = new TrackingFileStore()
             };
 
-            await using (await FileSystemDatabase.StartAsync(rootPath, [CreateTableDefinition()], options))
+            await using (await FolderDatabase.StartAsync(rootPath, [CreateTableDefinition()], options))
             {
             }
 
@@ -123,7 +123,7 @@ public sealed class FileSystemDatabaseStartTests
                 }
             };
 
-            await using var db = await FileSystemDatabase.StartAsync(rootPath, [CreateTableDefinition()], options);
+            await using var db = await FolderDatabase.StartAsync(rootPath, [CreateTableDefinition()], options);
             var table = db.Table<string, PlainTestRecord>();
 
             await table.UpsertAsync(new PlainTestRecord("id-1", "value-1"));
@@ -159,13 +159,13 @@ public sealed class FileSystemDatabaseStartTests
             var options = new DatabaseOptions
             {
                 FileStoreFactory = () => fileStore,
-                FileStoreRetryFactory = ctx => FileSystemDatabase.CreateDefaultRetryFileStore(
+                FileStoreRetryFactory = ctx => FolderDatabase.CreateDefaultRetryFileStore(
                     ctx.Inner,
                     retryOptions,
                     ctx.LoggerFactory)
             };
 
-            await using var db = await FileSystemDatabase.StartAsync(rootPath, [CreateTableDefinition()], options);
+            await using var db = await FolderDatabase.StartAsync(rootPath, [CreateTableDefinition()], options);
             var table = db.Table<string, PlainTestRecord>();
 
             await table.UpsertAsync(new PlainTestRecord("id-1", "value-1"));
@@ -193,12 +193,12 @@ public sealed class FileSystemDatabaseStartTests
             };
             var options = new DatabaseOptions
             {
-                RetrySchedulerFactory = loggerFactory => FileSystemDatabase.CreateDefaultRetryScheduler(
+                RetrySchedulerFactory = loggerFactory => FolderDatabase.CreateDefaultRetryScheduler(
                     retrySchedulerOptions,
                     loggerFactory)
             };
 
-            await using var db = await FileSystemDatabase.StartAsync(
+            await using var db = await FolderDatabase.StartAsync(
                 rootPath,
                 [CreateTableDefinition()],
                 options);
@@ -224,7 +224,7 @@ public sealed class FileSystemDatabaseStartTests
         {
             var options = new DatabaseOptions
             {
-                RetrySchedulerFactory = loggerFactory => FileSystemDatabase.CreateDefaultRetryScheduler(
+                RetrySchedulerFactory = loggerFactory => FolderDatabase.CreateDefaultRetryScheduler(
                     new DefaultRetrySchedulerOptions
                     {
                         IntervalMs = 100,
@@ -234,7 +234,7 @@ public sealed class FileSystemDatabaseStartTests
                     loggerFactory)
             };
 
-            await using var db = await FileSystemDatabase.StartAsync(
+            await using var db = await FolderDatabase.StartAsync(
                 rootPath,
                 [CreateTableDefinition()],
                 options);
@@ -262,12 +262,12 @@ public sealed class FileSystemDatabaseStartTests
         {
             var options = new DatabaseOptions
             {
-                RetrySchedulerFactory = loggerFactory => FileSystemDatabase.CreateDefaultRetryScheduler(
+                RetrySchedulerFactory = loggerFactory => FolderDatabase.CreateDefaultRetryScheduler(
                     new DefaultRetrySchedulerOptions(),
                     loggerFactory)
             };
 
-            await using (await FileSystemDatabase.StartAsync(rootPath, [CreateTableDefinition()], options))
+            await using (await FolderDatabase.StartAsync(rootPath, [CreateTableDefinition()], options))
             {
             }
 

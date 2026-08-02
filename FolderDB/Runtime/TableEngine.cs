@@ -149,7 +149,7 @@ public class TableEngine<TKey, TRecord, TProjection> :
     {
         if (databaseOptions.FileStoreRetryFactory is null)
         {
-            return FileSystemDatabase.CreateDefaultRetryFileStore(
+            return FolderDatabase.CreateDefaultRetryFileStore(
                 inner,
                 options: null,
                 loggerFactory);

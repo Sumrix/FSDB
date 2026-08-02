@@ -14,12 +14,12 @@ using Microsoft.Extensions.Logging;
 
 namespace FolderDB;
 
-public class FileSystemDatabase : IAsyncDisposable
+public class FolderDatabase : IAsyncDisposable
 {
     private readonly string _rootPath;
     private readonly DatabaseOptions _options;
     private readonly IReadOnlyList<ITableDefinition> _tableDefinitions;
-    private readonly ILogger<FileSystemDatabase> _logger;
+    private readonly ILogger<FolderDatabase> _logger;
     private readonly IFileStore _fileStore;
     private readonly IRetryScheduler<string> _retryScheduler;
 
@@ -34,14 +34,14 @@ public class FileSystemDatabase : IAsyncDisposable
     /// <exception cref="SecurityException">The caller does not have the required permissions.</exception>
     /// <exception cref="NotSupportedException">The path contains a format that is not supported.</exception>
     /// <exception cref="PathTooLongException">The specified path, file name, or both exceed the system-defined maximum length.</exception>
-    public static async Task<FileSystemDatabase> StartAsync(
+    public static async Task<FolderDatabase> StartAsync(
         string rootPath,
         IReadOnlyList<ITableDefinition> tableDefinitions,
         DatabaseOptions? options = null)
     {
         options ??= new DatabaseOptions();
 
-        var logger = options.LoggerFactory.CreateLogger<FileSystemDatabase>();
+        var logger = options.LoggerFactory.CreateLogger<FolderDatabase>();
         using var _ = logger.BeginMethodScope();
 
         logger.LogTrace("Starting: path=\"{RootPath}\" options={@Options}", rootPath, options);
@@ -49,7 +49,7 @@ public class FileSystemDatabase : IAsyncDisposable
         var services = CreateServices(options);
 
         rootPath = PathHelper.NormalizePath(rootPath);
-        var db = new FileSystemDatabase(
+        var db = new FolderDatabase(
             rootPath,
             options,
             tableDefinitions,
@@ -67,19 +67,19 @@ public class FileSystemDatabase : IAsyncDisposable
         }
         catch (Exception ex)
         {
-            logger.LogError(ex, "Failed to start FileSystemDatabase: path=\"{RootPath}\"", rootPath);
+            logger.LogError(ex, "Failed to start FolderDatabase: path=\"{RootPath}\"", rootPath);
             await db.DisposeAsync();
             throw;
         }
     }
 
-    private FileSystemDatabase(
+    private FolderDatabase(
         string rootPath,
         DatabaseOptions options,
         IReadOnlyList<ITableDefinition> tableDefinitions,
         IFileStore fileStore,
         IRetryScheduler<string> retryScheduler,
-        ILogger<FileSystemDatabase> logger)
+        ILogger<FolderDatabase> logger)
     {
         _rootPath = rootPath;
         _options = options;
