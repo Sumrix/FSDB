@@ -31,33 +31,33 @@ public sealed class RecordCodecBuilder<TKey, TRecord>
         return new ProjectionBuilder<TKey, TRecord>(new(recordCodecFactory), Options);
     }
 
-    public ProjectionBuilder<TKey, TRecord> UseJsonRecordCodec(DecoderPolicy<TRecord> decoderPolicy)
+    public ProjectionBuilder<TKey, TRecord> WithRecordSchema(RecordSchema<TRecord> recordSchema)
     {
-        ArgumentNullException.ThrowIfNull(decoderPolicy);
-        return UseRecordCodec(_ => new RecordCodec<TKey, TRecord>(decoderPolicy));
+        ArgumentNullException.ThrowIfNull(recordSchema);
+        return UseRecordCodec(_ => new RecordCodec<TKey, TRecord>(recordSchema));
     }
 
     [RequiresUnreferencedCode("Uses reflection-based resolver via populateMissingResolver.")]
     [RequiresDynamicCode("May require runtime code generation for reflection-based serialization.")]
     public ProjectionBuilder<TKey, TRecord> UseJsonRecordCodec(JsonSerializerOptions? options = null)
     {
-        return UseJsonRecordCodec(new DecoderPolicyBuilder().WithoutVersioning<TRecord>(options));
+        return WithRecordSchema(new RecordSchemaBuilder().WithoutVersioning<TRecord>(options));
     }
 
     public ProjectionBuilder<TKey, TRecord> UseJsonRecordCodec(JsonTypeInfo<TRecord> jsonTypeInfo)
     {
         ArgumentNullException.ThrowIfNull(jsonTypeInfo);
-        return UseJsonRecordCodec(new DecoderPolicyBuilder().WithoutVersioning(jsonTypeInfo));
+        return WithRecordSchema(new RecordSchemaBuilder().WithoutVersioning(jsonTypeInfo));
     }
 
-    public ProjectionBuilder<TKey, TRecord> UseJsonRecordCodec(
-        Func<DecoderPolicyBuilder, IDecoderPolicyFinalBuilder<TRecord>> decoderPolicyFactory)
+    public ProjectionBuilder<TKey, TRecord> WithRecordSchema(
+        Func<RecordSchemaBuilder, IRecordSchemaFinalBuilder<TRecord>> recordSchemaFactory)
     {
-        ArgumentNullException.ThrowIfNull(decoderPolicyFactory);
+        ArgumentNullException.ThrowIfNull(recordSchemaFactory);
 
-        var policyBuilder = decoderPolicyFactory(new DecoderPolicyBuilder());
-        ArgumentNullException.ThrowIfNull(policyBuilder);
+        var schemaBuilder = recordSchemaFactory(new RecordSchemaBuilder());
+        ArgumentNullException.ThrowIfNull(schemaBuilder);
 
-        return UseJsonRecordCodec(policyBuilder.Build());
+        return WithRecordSchema(schemaBuilder.Build());
     }
 }

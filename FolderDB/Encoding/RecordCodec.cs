@@ -5,20 +5,20 @@ using System.Threading.Tasks;
 
 namespace FolderDB.Encoding;
 
-public class RecordCodec<TKey, TRecord>(DecoderPolicy<TRecord> decoderPolicy)
+public class RecordCodec<TKey, TRecord>(RecordSchema<TRecord> recordSchema)
     : IRecordCodec<TKey, TRecord>
     where TRecord : IRecord<TKey>
 {
-    public int? CurrentSchemaVersion => decoderPolicy.CurrentSchemaVersion;
+    public int? CurrentSchemaVersion => recordSchema.CurrentSchemaVersion;
 
     public async Task<RecordDecodeResult<TRecord>> DecodeAsync(Stream jsonStream, CancellationToken ct)
     {
         using var document = await JsonDocument.ParseAsync(jsonStream, cancellationToken: ct);
-        return decoderPolicy.Decoder.Decode(document);
+        return recordSchema.Decoder.Decode(document);
     }
 
     public async Task EncodeAsync(Stream jsonStream, TRecord record, CancellationToken ct)
     {
-        await JsonSerializer.SerializeAsync(jsonStream, record, decoderPolicy.JsonTypeInfo, ct);
+        await JsonSerializer.SerializeAsync(jsonStream, record, recordSchema.JsonTypeInfo, ct);
     }
 }

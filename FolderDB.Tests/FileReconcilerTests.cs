@@ -359,14 +359,14 @@ public class FileReconcilerTests
 
         public static async Task<Fixture> CreateUnversionedAsync(IFileStore? fileStore = null)
         {
-            var policy = new DecoderPolicyBuilder()
+            var policy = new RecordSchemaBuilder()
                 .WithoutVersioning(TestsJsonContext.Default.TestRecord);
             return await CreateAsync(policy, fileStore);
         }
 
         public static async Task<Fixture> CreateVersionedAsync(IFileStore? fileStore = null)
         {
-            var policy = new DecoderPolicyBuilder()
+            var policy = new RecordSchemaBuilder()
                 .StartWith<LegacyTestRecord>(0)
                 .UpgradeTo(1, legacy => new TestRecord(legacy.Id, 1, $"migrated-{legacy.LegacyValue}"))
                 .Build();
@@ -374,7 +374,7 @@ public class FileReconcilerTests
         }
 
         private static async Task<Fixture> CreateAsync(
-            DecoderPolicy<TestRecord> policy,
+            RecordSchema<TestRecord> policy,
             IFileStore? fileStore)
         {
             var rootPath = Directory.CreateTempSubdirectory().FullName;

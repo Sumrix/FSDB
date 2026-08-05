@@ -6,52 +6,52 @@ using System.Text.Json.Serialization.Metadata;
 namespace FolderDB.Encoding;
 
 /// <summary>
-/// Entry point for creating <see cref="DecoderPolicy{TRecord}"/> instances.
+/// Entry point for creating <see cref="RecordSchema{TRecord}"/> instances.
 /// </summary>
-public class DecoderPolicyBuilder
+public class RecordSchemaBuilder
 {
     /// <summary>
-    /// Creates a decoder policy for a non-versioned record type using serializer metadata resolved from the provided options.
+    /// Creates a record schema for a non-versioned record type using serializer metadata resolved from the provided options.
     /// </summary>
     /// <typeparam name="T">The record type.</typeparam>
     /// <param name="options">The serializer options used to resolve <see cref="JsonTypeInfo{T}"/>. If <see langword="null"/>, <see cref="JsonSerializerOptions.Default"/> is used.</param>
-    /// <returns>A decoder policy that reads and writes records without schema migration.</returns>
+    /// <returns>A record schema that reads and writes a single version, with no upgrades.</returns>
     /// <exception cref="InvalidOperationException">Thrown when serializer metadata for <typeparamref name="T"/> cannot be resolved from <paramref name="options"/>.</exception>
     [RequiresUnreferencedCode("Uses reflection-based resolver via populateMissingResolver.")]
     [RequiresDynamicCode("May require runtime code generation for reflection-based serialization.")]
-    public DecoderPolicy<T> WithoutVersioning<T>(JsonSerializerOptions? options = null)
+    public RecordSchema<T> WithoutVersioning<T>(JsonSerializerOptions? options = null)
     {
         options ??= JsonSerializerOptions.Default;
         options.MakeReadOnly(populateMissingResolver: true);
         var jsonTypeInfo = (JsonTypeInfo<T>)options.GetTypeInfo(typeof(T));
 
-        return new DecoderPolicy<T>(new DirectRecordDecoder<T>(jsonTypeInfo), jsonTypeInfo);
+        return new RecordSchema<T>(new DirectRecordDecoder<T>(jsonTypeInfo), jsonTypeInfo);
     }
 
     /// <summary>
-    /// Creates a decoder policy for a non-versioned record type using explicit serializer metadata.
+    /// Creates a record schema for a non-versioned record type using explicit serializer metadata.
     /// </summary>
     /// <typeparam name="T">The record type.</typeparam>
     /// <param name="jsonTypeInfo">The serializer metadata used for both reading and writing records.</param>
-    /// <returns>A decoder policy that reads and writes records without schema migration.</returns>
+    /// <returns>A record schema that reads and writes a single version, with no upgrades.</returns>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="jsonTypeInfo"/> is <see langword="null"/>.</exception>
-    public DecoderPolicy<T> WithoutVersioning<T>(JsonTypeInfo<T> jsonTypeInfo)
+    public RecordSchema<T> WithoutVersioning<T>(JsonTypeInfo<T> jsonTypeInfo)
     {
         ArgumentNullException.ThrowIfNull(jsonTypeInfo);
-        return new DecoderPolicy<T>(new DirectRecordDecoder<T>(jsonTypeInfo), jsonTypeInfo);
+        return new RecordSchema<T>(new DirectRecordDecoder<T>(jsonTypeInfo), jsonTypeInfo);
     }
 
     /// <summary>
-    /// Starts building a decoder policy for a versioned record type using serializer metadata resolved from the provided options.
+    /// Starts building a record schema for a versioned record type using serializer metadata resolved from the provided options.
     /// </summary>
-    /// <typeparam name="T">The first record type in the migration chain.</typeparam>
+    /// <typeparam name="T">The first record type in the upgrade chain.</typeparam>
     /// <param name="version">The schema version represented by <typeparamref name="T"/>.</param>
     /// <param name="options">The serializer options used to resolve <see cref="JsonTypeInfo{T}"/>. If <see langword="null"/>, <see cref="JsonSerializerOptions.Default"/> is used.</param>
-    /// <returns>A fluent builder that can add migration steps and build the final decoder policy.</returns>
+    /// <returns>A fluent builder that can add upgrade steps and build the final record schema.</returns>
     /// <exception cref="InvalidOperationException">Thrown when serializer metadata for <typeparamref name="T"/> cannot be resolved from <paramref name="options"/>.</exception>
     [RequiresUnreferencedCode("Uses reflection-based resolver via populateMissingResolver.")]
     [RequiresDynamicCode("May require runtime code generation for reflection-based serialization.")]
-    public IDecoderPolicyBuilder<T> StartWith<T>(
+    public IRecordSchemaBuilder<T> StartWith<T>(
         int version,
         JsonSerializerOptions? options = null)
         where T : class, IVersionedRecord
@@ -60,23 +60,23 @@ public class DecoderPolicyBuilder
         options.MakeReadOnly(populateMissingResolver: true);
         var jsonTypeInfo = (JsonTypeInfo<T>)options.GetTypeInfo(typeof(T));
 
-        return new DecoderPolicyBuilderStep<T, T>(version, null, null, jsonTypeInfo);
+        return new RecordSchemaBuilderStep<T, T>(version, null, null, jsonTypeInfo);
     }
 
     /// <summary>
-    /// Starts building a decoder policy for a versioned record type using explicit serializer metadata.
+    /// Starts building a record schema for a versioned record type using explicit serializer metadata.
     /// </summary>
-    /// <typeparam name="T">The first record type in the migration chain.</typeparam>
+    /// <typeparam name="T">The first record type in the upgrade chain.</typeparam>
     /// <param name="version">The schema version represented by <typeparamref name="T"/>.</param>
     /// <param name="jsonTypeInfo">The serializer metadata used to read version <paramref name="version"/> records.</param>
-    /// <returns>A fluent builder that can add migration steps and build the final decoder policy.</returns>
+    /// <returns>A fluent builder that can add upgrade steps and build the final record schema.</returns>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="jsonTypeInfo"/> is <see langword="null"/>.</exception>
-    public IDecoderPolicyBuilder<T> StartWith<T>(
+    public IRecordSchemaBuilder<T> StartWith<T>(
         int version,
         JsonTypeInfo<T> jsonTypeInfo)
         where T : class, IVersionedRecord
     {
         ArgumentNullException.ThrowIfNull(jsonTypeInfo);
-        return new DecoderPolicyBuilderStep<T, T>(version, null, null, jsonTypeInfo);
+        return new RecordSchemaBuilderStep<T, T>(version, null, null, jsonTypeInfo);
     }
 }

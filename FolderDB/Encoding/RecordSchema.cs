@@ -4,19 +4,20 @@ using System.Text.Json.Serialization.Metadata;
 namespace FolderDB.Encoding;
 
 /// <summary>
-/// Defines how a record type is decoded from disk and which schema version is considered current.
+/// Describes how records of one type are read and written: how to decode any known schema version
+/// and upgrade it to the current one, and which serializer metadata writes it back.
 /// </summary>
-/// <typeparam name="TRecord">The record type produced by this policy.</typeparam>
-public class DecoderPolicy<TRecord>
+/// <typeparam name="TRecord">The record type produced by this schema.</typeparam>
+public class RecordSchema<TRecord>
 {
     /// <summary>
-    /// Initializes a new decoder policy.
+    /// Initializes a new <see cref="RecordSchema{TRecord}"/>.
     /// </summary>
-    /// <param name="decoder">The decoder that reads records from JSON and applies schema handling.</param>
+    /// <param name="decoder">The decoder that reads a record from JSON and upgrades it to the current schema version.</param>
     /// <param name="jsonTypeInfo">The serializer metadata used to write records.</param>
     /// <param name="currentSchemaVersion">The current schema version for versioned records, or <see langword="null"/> for non-versioned records.</param>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="decoder"/> or <paramref name="jsonTypeInfo"/> is <see langword="null"/>.</exception>
-    public DecoderPolicy(
+    public RecordSchema(
         ISchemaAwareRecordDecoder<TRecord> decoder,
         JsonTypeInfo<TRecord> jsonTypeInfo,
         int? currentSchemaVersion = null)
@@ -30,7 +31,7 @@ public class DecoderPolicy<TRecord>
     }
 
     /// <summary>
-    /// Gets the decoder used to read records from JSON.
+    /// Gets the decoder that reads records from JSON and upgrades them to the current schema version.
     /// </summary>
     public ISchemaAwareRecordDecoder<TRecord> Decoder { get; }
 

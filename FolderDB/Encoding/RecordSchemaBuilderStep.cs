@@ -6,8 +6,8 @@ using System.Text.Json.Serialization.Metadata;
 
 namespace FolderDB.Encoding;
 
-internal sealed class DecoderPolicyBuilderStep<TFrom, TCurrent>
-    : IRecordDecoderRegistryContributor<TCurrent>, IDecoderPolicyBuilder<TCurrent>
+internal sealed class RecordSchemaBuilderStep<TFrom, TCurrent>
+    : IRecordDecoderRegistryContributor<TCurrent>, IRecordSchemaBuilder<TCurrent>
     where TFrom : class, IVersionedRecord
     where TCurrent : class, IVersionedRecord
 {
@@ -16,7 +16,7 @@ internal sealed class DecoderPolicyBuilderStep<TFrom, TCurrent>
     private readonly JsonTypeInfo<TCurrent> _nextTypeInfo;
     private readonly int _nextVersion;
 
-    internal DecoderPolicyBuilderStep(
+    internal RecordSchemaBuilderStep(
         int currentVersion,
         Func<TFrom, TCurrent>? upgradeFunction,
         IRecordDecoderRegistryContributor<TFrom>? previousNode,
@@ -30,7 +30,7 @@ internal sealed class DecoderPolicyBuilderStep<TFrom, TCurrent>
 
     [RequiresUnreferencedCode("Uses reflection-based resolver via populateMissingResolver.")]
     [RequiresDynamicCode("May require runtime code generation for reflection-based serialization.")]
-    public IDecoderPolicyBuilder<TTo> UpgradeTo<TTo>(
+    public IRecordSchemaBuilder<TTo> UpgradeTo<TTo>(
         int toVersion,
         Func<TCurrent, TTo> upgrade,
         JsonSerializerOptions? options = null)
@@ -43,10 +43,10 @@ internal sealed class DecoderPolicyBuilderStep<TFrom, TCurrent>
         options.MakeReadOnly(populateMissingResolver: true);
         var toTypeInfo = (JsonTypeInfo<TTo>)options.GetTypeInfo(typeof(TTo));
 
-        return new DecoderPolicyBuilderStep<TCurrent, TTo>(toVersion, upgrade, this, toTypeInfo);
+        return new RecordSchemaBuilderStep<TCurrent, TTo>(toVersion, upgrade, this, toTypeInfo);
     }
 
-    public IDecoderPolicyBuilder<TTo> UpgradeTo<TTo>(
+    public IRecordSchemaBuilder<TTo> UpgradeTo<TTo>(
         int toVersion,
         Func<TCurrent, TTo> upgrade,
         JsonTypeInfo<TTo> toTypeInfo)
@@ -56,17 +56,17 @@ internal sealed class DecoderPolicyBuilderStep<TFrom, TCurrent>
         ArgumentNullException.ThrowIfNull(upgrade);
         ArgumentNullException.ThrowIfNull(toTypeInfo);
 
-        return new DecoderPolicyBuilderStep<TCurrent, TTo>(toVersion, upgrade, this, toTypeInfo);
+        return new RecordSchemaBuilderStep<TCurrent, TTo>(toVersion, upgrade, this, toTypeInfo);
     }
 
-    public DecoderPolicy<TCurrent> Build()
+    public RecordSchema<TCurrent> Build()
     {
         var terminalUpgrader = new IdentityUpgrader<TCurrent>();
         var decoders = new Dictionary<int, IRecordDecoder<TCurrent>>();
 
         ((IRecordDecoderRegistryContributor<TCurrent>)this).ContributeTo(decoders, terminalUpgrader);
 
-        return new DecoderPolicy<TCurrent>(
+        return new RecordSchema<TCurrent>(
             new RegistryRecordDecoder<TCurrent>(decoders),
             _nextTypeInfo,
             _nextVersion);

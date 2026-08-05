@@ -24,7 +24,7 @@ public class RecordScopedIndexEngineTests : IDisposable
             StringComparer.Ordinal,
             StringComparer.Ordinal,
             new RecordCodec<string, TestRecord>(
-                new DecoderPolicyBuilder().StartWith(1, TestsJsonContext.Default.TestRecord).Build()));
+                new RecordSchemaBuilder().StartWith(1, TestsJsonContext.Default.TestRecord).Build()));
     private static readonly ITableIndexPersistence<string, string> _stringPersistence =
         TestTableContext.CreateJsonIndexPersistence(
             TestsJsonContext.Default.String,
@@ -38,7 +38,7 @@ public class RecordScopedIndexEngineTests : IDisposable
             StringComparer.Ordinal,
             StringComparer.Ordinal,
             new RecordCodec<string, TestRecord>(
-                new DecoderPolicyBuilder().StartWith(1, TestsJsonContext.Default.TestRecord).Build()));
+                new RecordSchemaBuilder().StartWith(1, TestsJsonContext.Default.TestRecord).Build()));
     private static readonly ITableIndexPersistence<string, NoProjection> _noProjectionPersistence =
         TestTableContext.CreateJsonIndexPersistence(
             TestsJsonContext.Default.String,

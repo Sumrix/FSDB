@@ -55,7 +55,7 @@ internal sealed class ReconcilerTestContext : IAsyncDisposable
 
     public static async Task<ReconcilerTestContext> CreateAsync(IFileStore? fileStore = null)
     {
-        var decoderPolicy = new DecoderPolicyBuilder()
+        var recordSchema = new RecordSchemaBuilder()
             .StartWith<LegacyTestRecord>(0)
             .UpgradeTo(1, legacy => new TestRecord(legacy.Id, 1, $"migrated-{legacy.LegacyValue}"))
             .Build();
@@ -63,7 +63,7 @@ internal sealed class ReconcilerTestContext : IAsyncDisposable
         var tablePath = Path.Combine(rootPath, "table");
         var indexPath = Path.Combine(rootPath, "index-state.json");
         Directory.CreateDirectory(tablePath);
-        var codec = new RecordCodec<string, TestRecord>(decoderPolicy);
+        var codec = new RecordCodec<string, TestRecord>(recordSchema);
         var table = TestTableContext.Create<string, TestRecord, string>(
             static value => value.Value,
             static record => [record.Id],

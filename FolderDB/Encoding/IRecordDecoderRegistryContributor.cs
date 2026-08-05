@@ -3,7 +3,7 @@ using System.Collections.Generic;
 namespace FolderDB.Encoding;
 
 /// <summary>
-/// Contributes record decoders to a registry by chaining migration steps.
+/// Contributes record decoders to a registry by chaining upgrade steps.
 /// </summary>
 /// <typeparam name="TNext">The source type expected by the next upgrader in the chain.</typeparam>
 internal interface IRecordDecoderRegistryContributor<out TNext>

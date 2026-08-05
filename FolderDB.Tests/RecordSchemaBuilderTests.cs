@@ -8,7 +8,7 @@ using FolderDB.Tests.TestSupport;
 
 namespace FolderDB.Tests;
 
-public class DecoderPolicyBuilderTests
+public class RecordSchemaBuilderTests
 {
     [Fact]
     public async Task WithoutVersioning_WithCustomJsonTypeInfo_UsesItForDecode()
@@ -19,7 +19,7 @@ public class DecoderPolicyBuilderTests
         };
 
         var codec = new RecordCodec<string, SnakeCaseRecord>(
-            new DecoderPolicyBuilder().WithoutVersioning<SnakeCaseRecord>(options));
+            new RecordSchemaBuilder().WithoutVersioning<SnakeCaseRecord>(options));
         var record = new SnakeCaseRecord("id-1", "value-1");
 
         await using var stream = new MemoryStream(JsonSerializer.SerializeToUtf8Bytes(record, options));
@@ -35,7 +35,7 @@ public class DecoderPolicyBuilderTests
     public async Task Build_WithLegacySchema_ReturnsSourceAndTargetSchemaVersions()
     {
         var codec = new RecordCodec<string, TestRecord>(
-            new DecoderPolicyBuilder()
+            new RecordSchemaBuilder()
                 .StartWith<LegacyMigrationRecord>(0)
                 .UpgradeTo(1, legacy => new TestRecord(legacy.Id, 1, legacy.Value), TestsJsonContext.Default.TestRecord)
                 .Build());
@@ -55,7 +55,7 @@ public class DecoderPolicyBuilderTests
     public async Task Build_WithUpgradeReturningUnexpectedSchemaVersion_ThrowsRecordConversionException()
     {
         var codec = new RecordCodec<string, TestRecord>(
-            new DecoderPolicyBuilder()
+            new RecordSchemaBuilder()
                 .StartWith<LegacyMigrationRecord>(0)
                 .UpgradeTo(1, legacy => new TestRecord(legacy.Id, 0, legacy.Value), TestsJsonContext.Default.TestRecord)
                 .Build());
