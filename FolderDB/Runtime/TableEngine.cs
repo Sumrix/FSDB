@@ -20,8 +20,7 @@ namespace FolderDB.Runtime;
 
 public class TableEngine<TKey, TRecord, TProjection> :
     ITableEngine,
-    IIndexedTable<TKey, TRecord, TProjection>,
-    IIndexedFileTable<TKey, TRecord, TProjection>
+    IIndexedTable<TKey, TRecord, TProjection>
     where TRecord : class, IRecord<TKey>
     where TKey : notnull
 {
@@ -30,8 +29,7 @@ public class TableEngine<TKey, TRecord, TProjection> :
     private readonly TableIndex<TKey, TRecord, TProjection> _index;
     private readonly FileReconciler<TKey, TRecord, TProjection> _fileReconciler;
     private readonly DirectoryReconciler<TKey, TRecord, TProjection> _directoryReconciler;
-    private readonly DatabaseOperationProcessor<TKey, TRecord, TProjection> _dbProcessor;
-    private readonly FileOperationProcessor<TKey, TRecord, TProjection> _fileProcessor;
+    private readonly DatabaseOperationProcessor<TKey, TRecord, TProjection> _processor;
     private readonly PathWatcher _watcher;
     private readonly IReadOnlyDictionary<TKey, IndexEntry<TProjection>> _indexEntries;
     private readonly IReadOnlyDictionary<TKey, TProjection> _projections;
@@ -39,7 +37,7 @@ public class TableEngine<TKey, TRecord, TProjection> :
     private bool _disposed;
 
     public IReadOnlyDictionary<TKey, TProjection> Index => _projections;
-    IReadOnlyDictionary<TKey, IndexEntry<TProjection>> IIndexedFileTable<TKey, TRecord, TProjection>.Index => _indexEntries;
+    public IReadOnlyDictionary<TKey, IndexEntry<TProjection>> Entries => _indexEntries;
 
     private TableEngine(
         string tablePath,
@@ -47,8 +45,7 @@ public class TableEngine<TKey, TRecord, TProjection> :
         TableIndex<TKey, TRecord, TProjection> index,
         FileReconciler<TKey, TRecord, TProjection> fileReconciler,
         DirectoryReconciler<TKey, TRecord, TProjection> directoryReconciler,
-        DatabaseOperationProcessor<TKey, TRecord, TProjection> dbProcessor,
-        FileOperationProcessor<TKey, TRecord, TProjection> fileProcessor,
+        DatabaseOperationProcessor<TKey, TRecord, TProjection> processor,
         PathWatcher watcher)
     {
         _tablePath = tablePath;
@@ -56,8 +53,7 @@ public class TableEngine<TKey, TRecord, TProjection> :
         _index = index;
         _fileReconciler = fileReconciler;
         _directoryReconciler = directoryReconciler;
-        _dbProcessor = dbProcessor;
-        _fileProcessor = fileProcessor;
+        _processor = processor;
         _watcher = watcher;
         _indexEntries = new MappedDictionaryView<TKey, IReadOnlyRecordIndexState<TKey, TProjection>, IndexEntry<TProjection>>(
             _index.Records, TryCreateIndexEntry);
@@ -107,7 +103,7 @@ public class TableEngine<TKey, TRecord, TProjection> :
             (path, minBackoff) => retryScheduler.Enqueue(path, fileReconciler.ReconcileAsync, minBackoff),
             loggerFactory.CreateLogger<DirectoryReconciler<TKey, TRecord, TProjection>>());
 
-        var fileProcessor = new FileOperationProcessor<TKey, TRecord, TProjection>(
+        var processor = new DatabaseOperationProcessor<TKey, TRecord, TProjection>(
             tablePath,
             tableContext,
             index,
@@ -115,10 +111,7 @@ public class TableEngine<TKey, TRecord, TProjection> :
             options.MaxFileNameReserveAttempts,
             fileReconciler,
             (path, minBackoff) => retryScheduler.Enqueue(path, fileReconciler.ReconcileAsync, minBackoff),
-            loggerFactory.CreateLogger<FileOperationProcessor<TKey, TRecord, TProjection>>());
-
-        var dbProcessor = new DatabaseOperationProcessor<TKey, TRecord, TProjection>(
-            fileProcessor);
+            loggerFactory.CreateLogger<DatabaseOperationProcessor<TKey, TRecord, TProjection>>());
 
         var watcher = new PathWatcher(
             tablePath,
@@ -130,8 +123,7 @@ public class TableEngine<TKey, TRecord, TProjection> :
             index,
             fileReconciler,
             directoryReconciler,
-            dbProcessor,
-            fileProcessor,
+            processor,
             watcher);
         watcher.Changed += (_, path) => tableEngine.RequestFileReconcile(path);
         watcher.Error += (_, _) => tableEngine.RequestDirectoryReconcile();
@@ -245,17 +237,17 @@ public class TableEngine<TKey, TRecord, TProjection> :
         return new TableIndex<TKey, TRecord, TProjection>(engine, tableContext);
     }
 
-    public Task<TRecord?> GetAsync(TKey id, CancellationToken ct = default) => _dbProcessor.GetAsync(id, ct);
+    public Task<TRecord?> GetAsync(TKey id, CancellationToken ct = default) => _processor.GetAsync(id, ct);
 
-    public Task UpsertAsync(TRecord record, CancellationToken ct = default) => _dbProcessor.UpsertAsync(record, ct);
+    public Task UpsertAsync(TRecord record, CancellationToken ct = default) => _processor.UpsertAsync(record, ct);
 
-    public Task DeleteAsync(TKey id, CancellationToken ct = default) => _dbProcessor.DeleteAsync(id, ct);
+    public Task DeleteAsync(TKey id, CancellationToken ct = default) => _processor.DeleteAsync(id, ct);
 
-    public Task<ReadResult<TRecord>> ReadAsync(TKey id, CancellationToken ct = default) => _fileProcessor.ReadAsync(id, ct);
+    public Task<ReadResult<TRecord>> TryGetAsync(TKey id, CancellationToken ct = default) => _processor.TryGetAsync(id, ct);
 
-    public Task<OperationResult> WriteAsync(TRecord record, CancellationToken ct = default) => _fileProcessor.WriteAsync(record, ct);
+    public Task<OperationResult> TryUpsertAsync(TRecord record, CancellationToken ct = default) => _processor.TryUpsertAsync(record, ct);
 
-    public Task<OperationResult> RemoveAsync(TKey id, CancellationToken ct = default) => _fileProcessor.RemoveAsync(id, ct);
+    public Task<OperationResult> TryDeleteAsync(TKey id, CancellationToken ct = default) => _processor.TryDeleteAsync(id, ct);
 
     public Task FlushAsync(CancellationToken ct = default) => _index.FlushAsync(ct);
 

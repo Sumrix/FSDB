@@ -39,11 +39,11 @@ public sealed class FolderDatabaseStartTests
         try
         {
             await using var db = await FolderDatabase.StartAsync(rootPath, [CreateTableDefinition()]);
-            var table = db.IndexedFileTable<string, PlainTestRecord, NoProjection>();
+            var table = db.IndexedTable<string, PlainTestRecord, NoProjection>();
 
-            await table.WriteAsync(new PlainTestRecord("id-1", "value-1"));
+            await table.TryUpsertAsync(new PlainTestRecord("id-1", "value-1"));
 
-            var entry = Assert.Single(table.Index).Value;
+            var entry = Assert.Single(table.Entries).Value;
             Assert.Null(entry.ErrorInfo);
             Assert.NotNull(entry.FileName);
         }

@@ -27,11 +27,11 @@ public class DatabaseOperationProcessorTests
         .Build();
 
     [Fact]
-    public async Task ReadAsync_WhenRecordIsMissing_ReturnsSuccessWithNullRecord()
+    public async Task TryGetAsync_WhenRecordIsMissing_ReturnsSuccessWithNullRecord()
     {
         await using var ctx = await TestContext.CreateAsync();
 
-        var result = await ctx.FileProcessor.ReadAsync("missing");
+        var result = await ctx.Processor.TryGetAsync("missing");
 
         Assert.True(result.IsSuccess);
         Assert.Null(result.Record);
@@ -40,7 +40,7 @@ public class DatabaseOperationProcessorTests
     }
 
     [Fact]
-    public async Task ReadAsync_WhenDecodeFails_ReturnsInvalidRecordAndMarksFileInvalid()
+    public async Task TryGetAsync_WhenDecodeFails_ReturnsInvalidRecordAndMarksFileInvalid()
     {
         await using var ctx = await TestContext.CreateAsync();
         await ctx.Processor.UpsertAsync(new TestRecord("id-1", 1, "value"));
@@ -48,7 +48,7 @@ public class DatabaseOperationProcessorTests
         var fileName = await ctx.GetCurrentFileNameAsync("id-1");
         await File.WriteAllTextAsync(Path.Combine(ctx.TablePath, fileName), "{ invalid json");
 
-        var result = await ctx.FileProcessor.ReadAsync("id-1");
+        var result = await ctx.Processor.TryGetAsync("id-1");
 
         Assert.Equal(FileErrorReason.Invalid, result.ErrorReason);
         Assert.Null(result.Record);
@@ -70,7 +70,7 @@ public class DatabaseOperationProcessorTests
     }
 
     [Fact]
-    public async Task ReadAsync_WhenReadFailsWithTransientIo_ReturnsFileAccessFailedAndMarksFileUnavailable()
+    public async Task TryGetAsync_WhenReadFailsWithTransientIo_ReturnsFileAccessFailedAndMarksFileUnavailable()
     {
         await using var ctx = await TestContext.CreateAsync();
         await ctx.Processor.UpsertAsync(new TestRecord("id-1", 1, "value"));
@@ -78,7 +78,7 @@ public class DatabaseOperationProcessorTests
 
         ctx.FileStore.ReadExceptionFactory = _ => CreateTransientIOException();
 
-        var result = await ctx.FileProcessor.ReadAsync("id-1");
+        var result = await ctx.Processor.TryGetAsync("id-1");
 
         Assert.Equal(FileErrorReason.Unavailable, result.ErrorReason);
         Assert.Null(result.Record);
@@ -106,7 +106,7 @@ public class DatabaseOperationProcessorTests
     }
 
     [Fact]
-    public async Task ReadAsync_WhenFileDisappears_ReturnsSuccessNullAndRemovesFileFromIndex()
+    public async Task TryGetAsync_WhenFileDisappears_ReturnsSuccessNullAndRemovesFileFromIndex()
     {
         await using var ctx = await TestContext.CreateAsync();
         await ctx.Processor.UpsertAsync(new TestRecord("id-1", 1, "value"));
@@ -114,7 +114,7 @@ public class DatabaseOperationProcessorTests
         var fileName = await ctx.GetCurrentFileNameAsync("id-1");
         File.Delete(Path.Combine(ctx.TablePath, fileName));
 
-        var result = await ctx.FileProcessor.ReadAsync("id-1");
+        var result = await ctx.Processor.TryGetAsync("id-1");
 
         Assert.True(result.IsSuccess);
         Assert.Null(result.Record);
@@ -132,7 +132,7 @@ public class DatabaseOperationProcessorTests
         var fileName = await ctx.GetCurrentFileNameAsync("id-1");
         var filePath = Path.Combine(ctx.TablePath, fileName);
         await File.WriteAllTextAsync(filePath, "{ invalid json");
-        var getResult = await ctx.FileProcessor.ReadAsync("id-1");
+        var getResult = await ctx.Processor.TryGetAsync("id-1");
         Assert.Equal(FileErrorReason.Invalid, getResult.ErrorReason);
 
         await ctx.Processor.UpsertAsync(new TestRecord("id-1", 1, "restored"));
@@ -143,7 +143,7 @@ public class DatabaseOperationProcessorTests
     }
 
     [Fact]
-    public async Task ReadAsync_WhenErrorInfoFileBecomesReadableAgain_ReturnsRecordAndRestoresCommittedState()
+    public async Task TryGetAsync_WhenErrorInfoFileBecomesReadableAgain_ReturnsRecordAndRestoresCommittedState()
     {
         await using var ctx = await TestContext.CreateAsync();
         await ctx.Processor.UpsertAsync(new TestRecord("id-1", 1, "value"));
@@ -151,7 +151,7 @@ public class DatabaseOperationProcessorTests
         var fileName = await ctx.GetCurrentFileNameAsync("id-1");
         var filePath = Path.Combine(ctx.TablePath, fileName);
         await File.WriteAllTextAsync(filePath, "{ invalid json");
-        var invalidResult = await ctx.FileProcessor.ReadAsync("id-1");
+        var invalidResult = await ctx.Processor.TryGetAsync("id-1");
         Assert.Equal(FileErrorReason.Invalid, invalidResult.ErrorReason);
 
         var restored = new TestRecord("id-1", 1, "restored");
@@ -159,7 +159,7 @@ public class DatabaseOperationProcessorTests
             filePath,
             JsonSerializer.Serialize(restored, TestsJsonContext.Default.TestRecord));
 
-        var result = await ctx.FileProcessor.ReadAsync("id-1");
+        var result = await ctx.Processor.TryGetAsync("id-1");
         OperationResult operationResult = result;
 
         Assert.True(result.IsSuccess);
@@ -180,7 +180,7 @@ public class DatabaseOperationProcessorTests
         var changedRecord = new TestRecord("id-new", 1, "value-2");
         await File.WriteAllTextAsync(filePath, JsonSerializer.Serialize(changedRecord, TestsJsonContext.Default.TestRecord));
 
-        var result = await ctx.FileProcessor.ReadAsync("id-old");
+        var result = await ctx.Processor.TryGetAsync("id-old");
 
         Assert.True(result.IsSuccess);
         Assert.Null(result.Record);
@@ -201,12 +201,12 @@ public class DatabaseOperationProcessorTests
     }
 
     [Fact]
-    public async Task WriteAsync_WhenWriteFails_ReturnsFileAccessFailedAndCleansReservedFileFromIndex()
+    public async Task TryUpsertAsync_WhenWriteFails_ReturnsFileAccessFailedAndCleansReservedFileFromIndex()
     {
         await using var ctx = await TestContext.CreateAsync();
         ctx.FileStore.WriteExceptionFactory = _ => new IOException("write failure");
 
-        var result = await ctx.FileProcessor.WriteAsync(new TestRecord("id-1", 1, "value"));
+        var result = await ctx.Processor.TryUpsertAsync(new TestRecord("id-1", 1, "value"));
 
         Assert.Equal(FileErrorReason.Unavailable, result.ErrorReason);
         Assert.NotNull(result.FileName);
@@ -215,7 +215,7 @@ public class DatabaseOperationProcessorTests
     }
 
     [Fact]
-    public async Task WriteAsync_WhenLazyFileNameGeneratorFails_ThrowsFileNameGenerationException()
+    public async Task TryUpsertAsync_WhenLazyFileNameGeneratorFails_ThrowsFileNameGenerationException()
     {
         var definition = TableDefinitionBuilder
             .Create<string, TestRecord>()
@@ -228,7 +228,7 @@ public class DatabaseOperationProcessorTests
         await using var ctx = await TestContext.CreateAsync(definition);
 
         var ex = await Assert.ThrowsAsync<FileNameGenerationException>(
-            () => ctx.FileProcessor.WriteAsync(new TestRecord("id-1", 1, "value")));
+            () => ctx.Processor.TryUpsertAsync(new TestRecord("id-1", 1, "value")));
 
         Assert.IsType<NotSupportedException>(ex.InnerException);
         await ctx.AssertIndexEmptyAsync();
@@ -320,13 +320,13 @@ public class DatabaseOperationProcessorTests
     }
 
     [Fact]
-    public async Task RemoveAsync_WhenDeleteFails_ReturnsFileAccessFailedAndKeepsRecordInIndex()
+    public async Task TryDeleteAsync_WhenDeleteFails_ReturnsFileAccessFailedAndKeepsRecordInIndex()
     {
         await using var ctx = await TestContext.CreateAsync();
         await ctx.Processor.UpsertAsync(new TestRecord("id-1", 1, "value"));
         ctx.FileStore.DeleteExceptionFactory = _ => new IOException("delete failure");
 
-        var result = await ctx.FileProcessor.RemoveAsync("id-1");
+        var result = await ctx.Processor.TryDeleteAsync("id-1");
 
         Assert.Equal(FileErrorReason.Unavailable, result.ErrorReason);
         Assert.Equal(await ctx.GetCurrentFileNameAsync("id-1"), result.FileName);
@@ -351,7 +351,6 @@ public class DatabaseOperationProcessorTests
         public TableIndex<string, TestRecord, string> Index { get; }
         public DelegatingFileStore FileStore { get; }
         public DatabaseOperationProcessor<string, TestRecord, string> Processor { get; }
-        public FileOperationProcessor<string, TestRecord, string> FileProcessor { get; }
         public List<(string Path, bool MinBackoff)> ReconcileRequests { get; }
 
         private TestContext(
@@ -360,7 +359,6 @@ public class DatabaseOperationProcessorTests
             TableIndex<string, TestRecord, string> index,
             DelegatingFileStore fileStore,
             DatabaseOperationProcessor<string, TestRecord, string> processor,
-            FileOperationProcessor<string, TestRecord, string> fileProcessor,
             List<(string Path, bool MinBackoff)> reconcileRequests)
         {
             _rootPath = rootPath;
@@ -368,7 +366,6 @@ public class DatabaseOperationProcessorTests
             Index = index;
             FileStore = fileStore;
             Processor = processor;
-            FileProcessor = fileProcessor;
             ReconcileRequests = reconcileRequests;
         }
 
@@ -418,7 +415,7 @@ public class DatabaseOperationProcessorTests
                 store,
                 index,
                 NullLogger<FileReconciler<string, TestRecord, string>>.Instance);
-            var fileProcessor = new FileOperationProcessor<string, TestRecord, string>(
+            var processor = new DatabaseOperationProcessor<string, TestRecord, string>(
                 tablePath,
                 context,
                 index,
@@ -427,10 +424,8 @@ public class DatabaseOperationProcessorTests
                 fileReconciler,
                 (path, minBackoff) => reconcileRequests.Add((path, minBackoff)),
                 logger: null);
-            var processor = new DatabaseOperationProcessor<string, TestRecord, string>(
-                fileProcessor);
 
-            return new TestContext(rootPath, tablePath, index, fileStore, processor, fileProcessor, reconcileRequests);
+            return new TestContext(rootPath, tablePath, index, fileStore, processor, reconcileRequests);
         }
 
         public async Task<string> GetCurrentFileNameAsync(string id)

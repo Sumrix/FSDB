@@ -177,22 +177,6 @@ public class FolderDatabase : IAsyncDisposable
         return (IIndexedTable<TKey, TRecord, TProjection>)_tableEnginesByType[typeof(TRecord)];
     }
 
-    public IFileTable<TKey, TRecord> FileTable<TKey, TRecord>()
-        where TRecord : class, IRecord<TKey>
-        where TKey : notnull
-    {
-        ObjectDisposedException.ThrowIf(_disposed, this);
-        return (IFileTable<TKey, TRecord>)_tableEnginesByType[typeof(TRecord)];
-    }
-
-    public IIndexedFileTable<TKey, TRecord, TProjection> IndexedFileTable<TKey, TRecord, TProjection>()
-        where TRecord : class, IRecord<TKey>
-        where TKey : notnull
-    {
-        ObjectDisposedException.ThrowIf(_disposed, this);
-        return (IIndexedFileTable<TKey, TRecord, TProjection>)_tableEnginesByType[typeof(TRecord)];
-    }
-
     public async Task FlushAsync(CancellationToken ct = default)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);

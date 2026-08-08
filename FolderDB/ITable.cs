@@ -4,8 +4,13 @@ using System.Threading.Tasks;
 namespace FolderDB;
 
 /// <summary>
-/// Represents a strict table-like API over file-backed records.
+/// Represents a table-like API over file-backed records.
 /// </summary>
+/// <remarks>
+/// Every operation comes in two forms. The plain form throws when it cannot complete the operation.
+/// The <c>Try</c> form reports file errors as a result, but still throws on other kinds of error,
+/// such as a failure to generate a file name.
+/// </remarks>
 public interface ITable<in TKey, TRecord>
 {
     /// <summary>
@@ -25,4 +30,19 @@ public interface ITable<in TKey, TRecord>
     /// </summary>
     /// <exception cref="System.Exception">Throws when a known file cannot be deleted.</exception>
     Task DeleteAsync(TKey id, CancellationToken ct = default);
+
+    /// <summary>
+    /// Gets a record by id and reports expected file access or decoding failures in the result.
+    /// </summary>
+    Task<ReadResult<TRecord>> TryGetAsync(TKey id, CancellationToken ct = default);
+
+    /// <summary>
+    /// Fully replaces the stored state of a record and reports expected file access failures in the result.
+    /// </summary>
+    Task<OperationResult> TryUpsertAsync(TRecord record, CancellationToken ct = default);
+
+    /// <summary>
+    /// Deletes a record and all known files that belong to it, and reports expected file access failures in the result.
+    /// </summary>
+    Task<OperationResult> TryDeleteAsync(TKey id, CancellationToken ct = default);
 }
